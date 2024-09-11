@@ -116,7 +116,7 @@ pub async fn make_request_with_body(
     let mut req: Request<_> = Request::builder()
         .uri(url)
         .method(req_method.as_str())
-        .body(Full::new(req_body))?; //TODO: Make body optional
+        .body(Full::new(req_body))?;
 
     //TODO: figure out the issue about the accept-encoding header
     for (key, value) in request_headers.iter() {

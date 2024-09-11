@@ -241,7 +241,7 @@ pub async fn await_app_service_message(
             }
             // Acknowledges a message delivery
             match message.ack().await {
-                Ok(_res) => trace!(
+                Ok(_res) => info!(
                     func = fn_name,
                     package = PACKAGE_NAME,
                     "message Acknowledged",
@@ -449,7 +449,21 @@ async fn process_message(
             }
         }
     }
-
+    match message.ack().await {
+        Ok(_res) => info!(
+            func = fn_name,
+            package = PACKAGE_NAME,
+            "message Acknowledged",
+        ),
+        Err(err) => {
+            error!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "message acknowledge failed {}",
+                err
+            );
+        }
+    };
     Ok(true)
 }
 
