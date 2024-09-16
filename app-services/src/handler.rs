@@ -10,7 +10,7 @@ use tracing::{error, info};
 use crate::errors::{AppServicesError, AppServicesErrorCodes};
 use crate::service::{
     await_app_service_message, create_pull_consumer, parse_settings_payload,
-    reconnect_messaging_service, AppServiceSettings,
+    reconnect_messaging_service, subscribe_to_nats, AppServiceSettings,
 };
 const PACKAGE_NAME: &str = env!("CARGO_CRATE_NAME");
 pub struct AppServiceHandler {
@@ -36,67 +36,121 @@ impl AppServiceHandler {
             sync_app_services_token: None,
         }
     }
-    async fn app_service_consumer(&mut self, dns_name: String, local_port: u16) -> Result<bool> {
-        let fn_name = "app_service_consumer";
-        // safety: check for existing cancel token, and cancel it
-        let exist_settings_token = &self.app_services_consumer_token;
-        if exist_settings_token.is_some() {
-            let _ = exist_settings_token.as_ref().unwrap().cancel();
-        }
-        // create a new token
-        let settings_token = CancellationToken::new();
-        let settings_token_cloned = settings_token.clone();
-        let messaging_tx = self.messaging_tx.clone();
+    pub async fn subscribe_to_nats(&mut self, dns_name: String, local_port: u16) -> Result<()> {
+        let fn_name = "subscribe_to_nats";
+        info!(func = fn_name, package = PACKAGE_NAME, "init");
 
-        let consumer = match create_pull_consumer(self.messaging_tx.clone(), dns_name.clone()).await
-        {
-            Ok(s) => s,
+        // create a new token
+        let subscriber_token = CancellationToken::new();
+        let subscriber_token_cloned = subscriber_token.clone();
+        let messaging_tx = self.messaging_tx.clone();
+        let event_tx = self.event_tx.clone();
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(50));
+        let subscribers = match subscribe_to_nats(messaging_tx.clone(), dns_name.clone()).await {
+            Ok(v) => v,
             Err(e) => {
                 error!(
-                    func = fn_name,
+                    func = "subscribe_to_nats",
                     package = PACKAGE_NAME,
-                    "error creating pull consumer, error -  {:?}",
+                    "subscribe to nats error - {:?}",
                     e
                 );
-                bail!(AppServicesError::new(
-                    AppServicesErrorCodes::CreateConsumerError,
-                    format!("create consumer error - {:?} ", e.to_string()),
-                ))
+                bail!(e)
             }
         };
         let mut futures = JoinSet::new();
         futures.spawn(await_app_service_message(
             dns_name,
             local_port,
-            consumer.clone(),
+            subscribers.request.unwrap(),
             messaging_tx.clone(),
         ));
         // create spawn for timer
         let _: JoinHandle<Result<()>> = tokio::task::spawn(async move {
             loop {
                 select! {
-                        _ = settings_token.cancelled() => {
+                        _ = subscriber_token.cancelled() => {
                             info!(
                                 func = fn_name,
                                 package = PACKAGE_NAME,
                                 result = "success",
-                                "settings subscriber cancelled"
+                                "subscribe to nats cancelled"
                             );
                             return Ok(());
                     },
                     result = futures.join_next() => {
-                        if result.is_none() {
-                            continue;
-                        }
+                        if result.unwrap().is_ok() {}
                     },
+                    _ = timer.tick() => {}
                 }
             }
+            // return Ok(());
         });
-
         // Save to state
-        self.app_services_consumer_token = Some(settings_token_cloned);
-        Ok(true)
+        // self.subscriber_token = Some(subscriber_token_cloned);
+        Ok(())
     }
+    // async fn app_service_consumer(&mut self, dns_name: String, local_port: u16) -> Result<bool> {
+    //     let fn_name = "app_service_consumer";
+    //     // safety: check for existing cancel token, and cancel it
+    //     let exist_settings_token = &self.app_services_consumer_token;
+    //     if exist_settings_token.is_some() {
+    //         let _ = exist_settings_token.as_ref().unwrap().cancel();
+    //     }
+    //     // create a new token
+    //     let settings_token = CancellationToken::new();
+    //     let settings_token_cloned = settings_token.clone();
+    //     let messaging_tx = self.messaging_tx.clone();
+
+    //     let consumer = match create_pull_consumer(self.messaging_tx.clone(), dns_name.clone()).await
+    //     {
+    //         Ok(s) => s,
+    //         Err(e) => {
+    //             error!(
+    //                 func = fn_name,
+    //                 package = PACKAGE_NAME,
+    //                 "error creating pull consumer, error -  {:?}",
+    //                 e
+    //             );
+    //             bail!(AppServicesError::new(
+    //                 AppServicesErrorCodes::CreateConsumerError,
+    //                 format!("create consumer error - {:?} ", e.to_string()),
+    //             ))
+    //         }
+    //     };
+    //     let mut futures = JoinSet::new();
+    //     futures.spawn(await_app_service_message(
+    //         dns_name,
+    //         local_port,
+    //         consumer.clone(),
+    //         messaging_tx.clone(),
+    //     ));
+    //     // create spawn for timer
+    //     let _: JoinHandle<Result<()>> = tokio::task::spawn(async move {
+    //         loop {
+    //             select! {
+    //                     _ = settings_token.cancelled() => {
+    //                         info!(
+    //                             func = fn_name,
+    //                             package = PACKAGE_NAME,
+    //                             result = "success",
+    //                             "settings subscriber cancelled"
+    //                         );
+    //                         return Ok(());
+    //                 },
+    //                 result = futures.join_next() => {
+    //                     if result.is_none() {
+    //                         continue;
+    //                     }
+    //                 },
+    //             }
+    //         }
+    //     });
+
+    //     // Save to state
+    //     self.app_services_consumer_token = Some(settings_token_cloned);
+    //     Ok(true)
+    // }
     fn clear_app_services_subscriber(&self) -> Result<bool> {
         let exist_subscriber_token = &self.app_services_consumer_token;
         if exist_subscriber_token.is_some() {
@@ -165,7 +219,7 @@ impl AppServiceHandler {
                             );
                             //TODO: create function to handle settings update
                             for (key, value) in new_settings.into_iter() {
-                                println!("settings updated: {} / {}", key, value);
+                                println!("************ settings updated:*************** {} / {}", key, value);
                                 if key == "app_services.config" {
                                     info!(
                                         func = fn_name,
@@ -195,6 +249,7 @@ impl AppServiceHandler {
                                         let _ = self.clear_app_services_subscriber();
                                         let _ = self.clear_sync_settings_subscriber();
                                     } else {
+                                        // TODO: once normal flow is working, we can pass port mapping array
                                         let local_port:u16 = match app_service_settings.port_mapping[0].local_port.parse::<u16>() {
                                             Ok(s) => s,
                                             Err(e) => {
@@ -211,7 +266,8 @@ impl AppServiceHandler {
                                             }
                                         };
                                         let _ = reconnect_messaging_service(self.messaging_tx.clone(), app_service_settings.dns_name.clone(), existing_settings.clone()).await;
-                                        let _ = self.app_service_consumer(app_service_settings.dns_name, local_port).await;
+                                        let _ = self.subscribe_to_nats(app_service_settings.dns_name.clone(), local_port).await;
+                                        // let _ = self.app_service_consumer(app_service_settings.dns_name, local_port).await;
                                     }
                                 }
                             }

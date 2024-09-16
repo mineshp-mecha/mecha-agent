@@ -6,6 +6,7 @@ use channel::recv_with_timeout;
 use crypto::random::generate_random_alphanumeric;
 use futures::StreamExt;
 use http_body_util::BodyExt;
+use messaging::{async_nats::Message, Subscriber as NatsSubscriber};
 
 use hyper::{
     body::{Bytes as HyperBodyBytes, Incoming},
@@ -14,7 +15,7 @@ use hyper::{
 use messaging::{async_nats::HeaderMap, handler::MessagingMessage};
 use nats_client::{
     async_nats::jetstream::consumer::{pull::Config, Consumer},
-    Bytes, Message,
+    Bytes,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -44,6 +45,15 @@ pub struct SettingsAckPayload {
     pub status: String,
 }
 
+#[derive(Debug)]
+pub enum AppServicesSubjects {
+    Request(String),
+}
+
+#[derive(Debug, Default)]
+pub struct ProvisioningSubscriber {
+    pub request: Option<NatsSubscriber>,
+}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AddTaskRequestPayload {
     pub key: String,
@@ -87,6 +97,67 @@ struct RequestState {
     content_length: usize,
 }
 
+pub async fn subscribe_to_nats(
+    messaging_tx: mpsc::Sender<MessagingMessage>,
+    dns_name: String,
+) -> Result<ProvisioningSubscriber> {
+    let fn_name = "subscribe_to_nats";
+    let list_of_subjects = vec![AppServicesSubjects::Request(format!(
+        "app_services.gateway.{}.>",
+        sha256::digest(dns_name)
+    ))];
+    debug!(
+        func = fn_name,
+        package = PACKAGE_NAME,
+        "list of subjects - {:?}",
+        list_of_subjects
+    );
+    let mut provisioning_subscribers = ProvisioningSubscriber::default();
+    // Iterate over everything.
+    for subject in list_of_subjects {
+        let (tx, rx) = oneshot::channel();
+        let subject_string = match &subject {
+            AppServicesSubjects::Request(s) => s.to_string(),
+        };
+        match messaging_tx
+            .send(MessagingMessage::Subscriber {
+                reply_to: tx,
+                subject: subject_string,
+            })
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                error!(
+                    func = fn_name,
+                    package = PACKAGE_NAME,
+                    "error sending get que subscriber for issue token- {}",
+                    e
+                );
+                bail!(e)
+            }
+        }
+        match recv_with_timeout(rx).await {
+            Ok(subscriber) => match &subject {
+                &AppServicesSubjects::Request(_) => {
+                    provisioning_subscribers.request = Some(subscriber)
+                }
+            },
+            Err(e) => {
+                error!(
+                    func = fn_name,
+                    package = PACKAGE_NAME,
+                    "error while get networking subscriber - {:?}, error - {}",
+                    &subject,
+                    e
+                );
+                bail!(e)
+            }
+        };
+    }
+
+    Ok(provisioning_subscribers)
+}
 pub async fn create_pull_consumer(
     messaging_tx: Sender<MessagingMessage>,
     dns_name: String,
@@ -187,7 +258,7 @@ pub async fn create_pull_consumer(
 pub async fn await_app_service_message(
     dns_name: String,
     local_port: u16,
-    consumer: Consumer<Config>,
+    mut subscriber: NatsSubscriber,
     messaging_tx: Sender<MessagingMessage>,
 ) -> Result<bool> {
     let fn_name = "await_app_service_message";
@@ -195,24 +266,25 @@ pub async fn await_app_service_message(
 
     // Create a HashMap wrapped in a Mutex and Arc for shared ownership
     let req_map: Arc<Mutex<HashMap<String, RequestState>>> = Arc::new(Mutex::new(HashMap::new()));
-    let mut messages = match consumer.messages().await {
-        Ok(s) => s,
-        Err(e) => {
-            error!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "error fetching messages, error -  {:?}",
-                e
-            );
-            bail!(AppServicesError::new(
-                AppServicesErrorCodes::PullMessagesError,
-                format!("pull messages error - {:?} - {}", e.kind(), e.to_string()),
-            ))
-        }
-    };
+    // let mut messages = match consumer.messages().await {
+    //     Ok(s) => s,
+    //     Err(e) => {
+    //         error!(
+    //             func = fn_name,
+    //             package = PACKAGE_NAME,
+    //             "error fetching messages, error -  {:?}",
+    //             e
+    //         );
+    //         bail!(AppServicesError::new(
+    //             AppServicesErrorCodes::PullMessagesError,
+    //             format!("pull messages error - {:?} - {}", e.kind(), e.to_string()),
+    //         ))
+    //     }
+    // };
 
     println!("messages fetched");
-    while let Some(Ok(message)) = messages.next().await {
+    // while let Some(Ok(message)) = subscriber.next().await {
+    while let Some(message) = subscriber.next().await {
         println!("new message subject: {:?}", message.subject);
         let message_tx_cloned = messaging_tx.clone();
         let dns_name_cloned = dns_name.clone();
@@ -240,21 +312,21 @@ pub async fn await_app_service_message(
                 }
             }
             // Acknowledges a message delivery
-            match message.ack().await {
-                Ok(_res) => info!(
-                    func = fn_name,
-                    package = PACKAGE_NAME,
-                    "message Acknowledged",
-                ),
-                Err(err) => {
-                    error!(
-                        func = fn_name,
-                        package = PACKAGE_NAME,
-                        "message acknowledge failed {}",
-                        err
-                    );
-                }
-            };
+            // match message.ack().await {
+            //     Ok(_res) => info!(
+            //         func = fn_name,
+            //         package = PACKAGE_NAME,
+            //         "message Acknowledged",
+            //     ),
+            //     Err(err) => {
+            //         error!(
+            //             func = fn_name,
+            //             package = PACKAGE_NAME,
+            //             "message acknowledge failed {}",
+            //             err
+            //         );
+            //     }
+            // };
         });
     }
     Ok(true)
@@ -449,21 +521,6 @@ async fn process_message(
             }
         }
     }
-    match message.ack().await {
-        Ok(_res) => info!(
-            func = fn_name,
-            package = PACKAGE_NAME,
-            "message Acknowledged",
-        ),
-        Err(err) => {
-            error!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "message acknowledge failed {}",
-                err
-            );
-        }
-    };
     Ok(true)
 }
 
