@@ -9,7 +9,6 @@ use crate::services::provisioning::ProvisioningServiceHandler;
 use crate::services::settings::SettingsServiceHandler;
 use crate::services::telemetry::TelemetryServiceHandler;
 use crate::services::telemetry::{LogsAgent, MetricsAgent};
-use agent_settings::{read_settings_yml, AgentSettings};
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
@@ -43,6 +42,7 @@ pub struct EncodeData {
     user_type: String,
 }
 pub struct GrpcServerOptions {
+    pub grpc_socket_addr: SocketAddr,
     pub provisioning_tx: mpsc::Sender<provisioning::handler::ProvisioningMessage>,
     pub identity_tx: mpsc::Sender<identity::handler::IdentityMessage>,
     pub messaging_tx: mpsc::Sender<messaging::handler::MessagingMessage>,
@@ -51,22 +51,6 @@ pub struct GrpcServerOptions {
 }
 
 pub async fn start_grpc_service(opt: GrpcServerOptions) -> Result<()> {
-    // TODO: pass settings from main()
-    let settings = match read_settings_yml() {
-        Ok(v) => v,
-        Err(_e) => AgentSettings::default(),
-    };
-
-    // Construct socket address
-    let ip: IpAddr = settings
-        .grpc
-        .addr
-        .parse()
-        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
-    let port: u16 = settings.grpc.port as u16;
-
-    let addr: SocketAddr = (ip, port).into();
-
     let provisioning_service_handler = ProvisioningServiceHandler::new(opt.provisioning_tx.clone());
     let identity_service_handler = IdentityServiceHandler::new(opt.identity_tx);
     let messaging_service_handler = MessagingServiceHandler::new(opt.messaging_tx);
@@ -87,7 +71,7 @@ pub async fn start_grpc_service(opt: GrpcServerOptions) -> Result<()> {
         .add_service(SettingsServiceServer::new(settings_service_handler))
         .add_service(LogsServiceServer::new(logs_handler))
         .add_service(MetricsServiceServer::new(metrics_handler))
-        .serve(addr)
+        .serve(opt.grpc_socket_addr)
         .await
     {
         Ok(s) => s,
@@ -108,7 +92,7 @@ pub async fn start_grpc_service(opt: GrpcServerOptions) -> Result<()> {
         func = "start_grpc_service",
         package = env!("CARGO_PKG_NAME"),
         "grpc server started on - {}",
-        addr
+        opt.grpc_socket_addr
     );
     Ok(())
 }

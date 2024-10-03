@@ -165,7 +165,7 @@ impl AppServiceHandler {
                             );
                             //TODO: create function to handle settings update
                             for (key, value) in new_settings.into_iter() {
-                                println!("settings updated: {} / {}", key, value);
+                                println!("settings updated: {}", key);
                                 if key == "app_services.config" {
                                     info!(
                                         func = fn_name,

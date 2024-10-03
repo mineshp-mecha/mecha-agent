@@ -12,7 +12,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot},
 };
 use tonic::async_trait;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -138,6 +138,11 @@ impl MessagingHandler {
                             let _ = &self.stop().await;
                         },
                         Event::Nats(nats_client::NatsEvent::Disconnected) => {
+                            warn!(
+                                func = "run",
+                                package = PACKAGE_NAME,
+                                "messaging service disconnected"
+                            );
                             let _ = match self.event_tx.send(Event::Messaging(events::MessagingEvent::Disconnected)) {
                                 Ok(_) => {}
                                 Err(e) => {

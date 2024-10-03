@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use crate::errors::{AgentError, AgentErrorCodes};
 use agent_settings::AgentSettings;
 use anyhow::{bail, Result};
@@ -18,7 +20,7 @@ use tracing::error;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 const CHANNEL_SIZE: usize = 32;
 
-pub async fn init_handlers(settings: AgentSettings, socket_addr: &str) -> Result<bool> {
+pub async fn init_handlers(settings: AgentSettings, socket_addr: &SocketAddr) -> Result<bool> {
     let (event_tx, _) = broadcast::channel(CHANNEL_SIZE);
     let (identity_t, identity_tx) = init_identity_service(IdentityOptions {
         event_tx: event_tx.clone(),
@@ -95,6 +97,7 @@ pub async fn init_handlers(settings: AgentSettings, socket_addr: &str) -> Result
     .await;
 
     let grpc_t = init_grpc_server(
+        socket_addr,
         prov_tx.clone(),
         identity_tx.clone(),
         messaging_tx.clone(),
@@ -348,14 +351,17 @@ async fn init_app_service(
 }
 
 async fn init_grpc_server(
+    grpc_socket_addr: &SocketAddr,
     provisioning_tx: mpsc::Sender<ProvisioningMessage>,
     identity_tx: mpsc::Sender<IdentityMessage>,
     messaging_tx: mpsc::Sender<MessagingMessage>,
     settings_tx: mpsc::Sender<SettingMessage>,
     telemetry_tx: mpsc::Sender<TelemetryMessage>,
 ) -> task::JoinHandle<()> {
+    let grpc_socket_addr = grpc_socket_addr.clone();
     let grpc_t = tokio::spawn(async move {
         let _ = grpc_server::start_grpc_service(GrpcServerOptions {
+            grpc_socket_addr,
             provisioning_tx,
             identity_tx,
             messaging_tx,

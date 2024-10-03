@@ -1,13 +1,12 @@
-use opentelemetry::logs::LogError;
-use opentelemetry::{metrics, KeyValue};
+use anyhow::{bail, Result};
+use opentelemetry::KeyValue;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
-use opentelemetry_sdk::logs::Config;
-use opentelemetry_sdk::{metrics::MeterProvider, runtime, Resource};
+use opentelemetry_sdk::{metrics, runtime, Resource};
 use std::time::Duration;
 pub fn init_otlp_configuration(
     otlp_collector_addr: String,
     export_metrics_duration: u64,
-) -> metrics::Result<MeterProvider> {
+) -> Result<metrics::SdkMeterProvider, opentelemetry::metrics::MetricsError> {
     let export_config = ExportConfig {
         endpoint: otlp_collector_addr,
         ..ExportConfig::default()
@@ -33,20 +32,27 @@ pub fn init_otlp_configuration(
 
 pub fn init_logs_config(
     otlp_collector_address: String,
-) -> Result<opentelemetry_sdk::logs::Logger, LogError> {
-    opentelemetry_otlp::new_pipeline()
+) -> Result<opentelemetry_sdk::logs::LoggerProvider> {
+    match opentelemetry_otlp::new_pipeline()
         .logging()
-        .with_log_config(Config::default().with_resource(Resource::new(vec![
+        .with_resource(Resource::new(vec![
             KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
                 "mecha-agent-service",
             ),
             KeyValue::new("stream_name", "log_stream"),
-        ])))
+        ]))
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .tonic()
                 .with_endpoint(otlp_collector_address),
         )
-        .install_batch(runtime::Tokio)
+        .install_batch(opentelemetry_sdk::runtime::Tokio)
+    {
+        Ok(provider) => return Ok(provider),
+        Err(e) => {
+            eprintln!("error initializing logs config: {:?}", e);
+            bail!(e);
+        }
+    };
 }
