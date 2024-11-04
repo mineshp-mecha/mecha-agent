@@ -28,7 +28,7 @@ RUN apt update \
 
 EXPOSE 3001
 
-COPY --from=builder /usr/app/target/release/agent ./
+COPY --from=builder /usr/app/target/release/mecha-agent ./
 COPY ./settings.yml ./
 
-CMD ["/usr/app/agent", "-s", "/usr/app/settings.yml"]
+CMD ["/usr/app/mecha-agent", "-s", "/usr/app/settings.yml"]
