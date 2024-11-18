@@ -1,6 +1,6 @@
 [workspace]
 default-members = ["agent"]
-members = ["agent", "app-services", "core/services", "core/events", "core/settings", "provisioning", "messaging", "identity", "status", "settings", "grpc-server", "networking","telemetry","commons/crypto", "commons/kv-store", "commons/fs", "client/app/src-tauri", "commons/wireguard"]
+members = ["agent", "app-services", "cli", "core/services", "core/events", "core/settings", "provisioning", "messaging", "identity", "status", "settings", "grpc-server", "networking","telemetry","commons/crypto", "commons/kv-store", "commons/fs", "client/app/src-tauri", "commons/wireguard"]
 resolver = "2"
 
 [workspace.package]
@@ -41,3 +41,4 @@ bincode = "1.3.3"
 sha256 = "1.1.2"
 futures = "0.3.28"
 log = "0.4.20"
+clap = { version = "4.5.1", features = ["derive"] }

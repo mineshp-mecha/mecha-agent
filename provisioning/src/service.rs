@@ -540,7 +540,7 @@ async fn perform_cryptography_operation(
     Ok(true)
 }
 
-pub fn de_provision(data_dir: &str, event_tx: Sender<Event>) -> Result<bool> {
+pub fn de_provision(data_dir: &str, event_tx_opt: Option<Sender<Event>>) -> Result<bool> {
     let fn_name = "de_provision";
     trace!(func = fn_name, package = PACKAGE_NAME, "init",);
     //1. Delete certs
@@ -570,28 +570,30 @@ pub fn de_provision(data_dir: &str, event_tx: Sender<Event>) -> Result<bool> {
     }
 
     //2. Event to stop all services
-    match event_tx.send(Event::Provisioning(
-        events::ProvisioningEvent::Deprovisioned,
-    )) {
-        Ok(_) => trace!(
-            func = fn_name,
-            package = PACKAGE_NAME,
-            "de provisioning event sent successfully"
-        ),
-        Err(e) => {
-            error!(
+    if let Some(event_tx) = event_tx_opt {
+        match event_tx.send(Event::Provisioning(
+            events::ProvisioningEvent::Deprovisioned,
+        )) {
+            Ok(_) => trace!(
                 func = fn_name,
                 package = PACKAGE_NAME,
-                "error sending de provisioning event - {}",
-                e
-            );
-            bail!(ProvisioningError::new(
-                ProvisioningErrorCodes::SendEventError,
-                format!(
-                    "error sending de provisioning event, code:{}, error - {}",
-                    1001, e
-                ),
-            ));
+                "de provisioning event sent successfully"
+            ),
+            Err(e) => {
+                error!(
+                    func = fn_name,
+                    package = PACKAGE_NAME,
+                    "error sending de provisioning event - {}",
+                    e
+                );
+                bail!(ProvisioningError::new(
+                    ProvisioningErrorCodes::SendEventError,
+                    format!(
+                        "error sending de provisioning event, code:{}, error - {}",
+                        1001, e
+                    ),
+                ));
+            }
         }
     }
 
@@ -1189,7 +1191,7 @@ pub async fn await_deprovision_message(
             continue;
         }
 
-        match de_provision(&data_dir, event_tx.clone()) {
+        match de_provision(&data_dir, Some(event_tx.clone())) {
             Ok(_) => {
                 info!(
                     func = "init",

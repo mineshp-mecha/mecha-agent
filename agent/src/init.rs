@@ -18,7 +18,11 @@ use tracing::error;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 const CHANNEL_SIZE: usize = 32;
 
-pub async fn init_handlers(settings: AgentSettings, socket_addr: &str) -> Result<bool> {
+pub async fn init_handlers(
+    settings: AgentSettings,
+    socket_addr: &str,
+    start_grpc: bool,
+) -> Result<bool> {
     let (event_tx, _) = broadcast::channel(CHANNEL_SIZE);
     let (identity_t, identity_tx) = init_identity_service(IdentityOptions {
         event_tx: event_tx.clone(),
@@ -94,14 +98,17 @@ pub async fn init_handlers(settings: AgentSettings, socket_addr: &str) -> Result
     })
     .await;
 
-    let grpc_t = init_grpc_server(
-        prov_tx.clone(),
-        identity_tx.clone(),
-        messaging_tx.clone(),
-        setting_tx.clone(),
-        telemetry_tx.clone(),
-    )
-    .await;
+    if start_grpc {
+        let grpc_t = init_grpc_server(
+            prov_tx.clone(),
+            identity_tx.clone(),
+            messaging_tx.clone(),
+            setting_tx.clone(),
+            telemetry_tx.clone(),
+        )
+        .await;
+        let _ = grpc_t.await.unwrap();
+    }
 
     //TODO: remove this
     // let start_t = tokio::task::spawn(async move {
@@ -119,7 +126,6 @@ pub async fn init_handlers(settings: AgentSettings, socket_addr: &str) -> Result
     let _ = networking_t.await.unwrap();
     let _ = telemetry_t.await.unwrap();
     let _ = app_service_t.await.unwrap();
-    let _ = grpc_t.await.unwrap();
 
     Ok(true)
 }

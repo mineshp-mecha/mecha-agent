@@ -15,6 +15,7 @@ path = "src/bin/agent.rs"
 events = { path = "../core/events" }
 agent-settings = { path = "../core/settings" }
 app-services = { path = "../app-services" }
+cli = { path = "../cli" }
 grpc-server = { path = "../grpc-server" }
 status = { path = "../status" }
 identity = { path = "../identity" }
@@ -39,8 +40,10 @@ protobuf = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 bincode = { workspace = true }
+clap = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-appender = "0.2.3"
+
 
 [build-dependencies]
 tonic-build = "0.10.2"

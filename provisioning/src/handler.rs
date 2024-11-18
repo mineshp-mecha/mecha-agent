@@ -165,7 +165,7 @@ impl ProvisioningHandler {
                             let _ = reply_to.send(status);
                         }
                         ProvisioningMessage::Deprovision { reply_to } => {
-                            let status = de_provision(&self.settings.data_dir, self.event_tx.clone());
+                            let status = de_provision(&self.settings.data_dir, Some(self.event_tx.clone()));
                             let _ = reply_to.send(status);
                         }
                     };

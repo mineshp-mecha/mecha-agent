@@ -5,6 +5,12 @@ use crypto::MachineCertDetails;
 use tracing::{error, trace};
 
 const PACKAGE_NAME: &str = env!("CARGO_CRATE_NAME");
+#[derive(Debug)]
+pub struct MachineDetails {
+    pub machine_id: String,
+    pub certificate_serial_number: String,
+    pub certificate_fingerprint: String,
+}
 pub fn get_provision_status(data_dir: &str) -> Result<bool> {
     let fn_name = "get_provision_status";
     trace!(
@@ -72,4 +78,40 @@ pub fn get_machine_cert(data_dir: &str) -> Result<MachineCertDetails> {
             }
         };
     Ok(machine_cert)
+}
+
+pub fn get_machine_details(data_dir: &str) -> Result<MachineDetails> {
+    let fn_name = "get_machine_details";
+    trace!(func = "get_machine_details", "init");
+    let machine_id = match get_machine_id(data_dir) {
+        Ok(machine_id) => machine_id,
+        Err(e) => {
+            error!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "failed to get machine id: {:?}",
+                e
+            );
+            bail!(e)
+        }
+    };
+    let machine_cert = match get_machine_cert(data_dir) {
+        Ok(machine_cert) => machine_cert,
+        Err(e) => {
+            error!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "failed to get machine cert: {:?}",
+                e
+            );
+            bail!(e)
+        }
+    };
+
+    let data = MachineDetails {
+        machine_id: machine_id.clone(),
+        certificate_serial_number: machine_cert.serial_number.clone(),
+        certificate_fingerprint: machine_cert.fingerprint.clone(),
+    };
+    Ok(data)
 }

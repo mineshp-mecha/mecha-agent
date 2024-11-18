@@ -1,12 +1,12 @@
+use agent_settings::{read_settings_yml, AgentSettings, GrpcSettings, LoggingSettings};
+use anyhow::{bail, Result};
+use clap::{command, Parser};
+use init_tracing_opentelemetry::tracing_subscriber_ext::{build_logger_text, build_otel_layer};
 use std::{
     net::{IpAddr, SocketAddr},
     path::Path,
 };
 use tracing_subscriber::prelude::*;
-
-use agent_settings::{read_settings_yml, AgentSettings, GrpcSettings, LoggingSettings};
-use anyhow::{bail, Result};
-use init_tracing_opentelemetry::tracing_subscriber_ext::{build_logger_text, build_otel_layer};
 
 use mecha_agent::{
     errors::{AgentError, AgentErrorCodes},
@@ -18,6 +18,33 @@ use telemetry::config::init_logs_config;
 use tracing_appender::{non_blocking, rolling::never};
 use tracing_subscriber::{fmt::Layer, prelude::__tracing_subscriber_SubscriberExt, EnvFilter};
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
+#[derive(Parser, Debug)]
+struct StartCommand {
+    /// Path to the settings file
+    #[arg(short, long)]
+    settings: String,
+
+    #[arg(long = "server")]
+    init_grpc: bool,
+}
+#[derive(Debug, Parser)]
+enum MectlCommand {
+    #[command(about = "Start the agent")]
+    Start(StartCommand),
+    #[command(about = "Setup new machine")]
+    Setup(Setup),
+    #[command(about = "Machine details")]
+    Whoami(Whoami),
+    #[command(about = "Reset machine")]
+    Reset(Reset),
+}
+#[derive(Debug, Parser)] // requires `derive` feature
+#[command(name = "mectl")]
+#[command(about = "mecha agent CLI", long_about = None)]
+struct Mectl {
+    #[command(subcommand)]
+    command: MectlCommand,
+}
 #[tokio::main]
 async fn main() -> Result<()> {
     let settings = match read_settings_yml() {
@@ -78,7 +105,7 @@ async fn main() -> Result<()> {
 
     println!("logs level: {:?}", settings.logging.level.as_str());
     let subscriber = tracing_subscriber::registry()
-        .with(tracing_bridge_layer)
+        // .with(tracing_bridge_layer)
         .with(write_to_file_layer)
         .with(console_logs_layer)
         .with(build_otel_layer().unwrap());
@@ -96,7 +123,26 @@ async fn main() -> Result<()> {
         result = "success",
         "tracing set up",
     );
-    let _ = init_handlers(settings, &socket_addr.to_string()).await;
+    let mectl = Mectl::parse();
+    match mectl.command {
+        MectlCommand::Setup(configure) => {
+            let _ = configure.run().await;
+        }
+        MectlCommand::Start(start) => {
+            // configure the global logger to use our opentelemetry logger
+            let _ = init_handlers(settings, &socket_addr.to_string(), start.init_grpc).await;
+        }
+        MectlCommand::Whoami(whoami) => {
+            let _ = whoami.run().await;
+        }
+        MectlCommand::Reset(reset) => {
+            let _ = reset.run().await;
+        }
+        _ => {
+            bail!("Command not found");
+        }
+    }
+
     Ok(())
 }
 
