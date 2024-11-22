@@ -109,6 +109,7 @@ struct CertFiles<'a> {
 #[automock]
 pub trait FileSystem {
     fn remove_files(&self, files: Vec<String>) -> Result<()>;
+    fn remove_dir_all(&self, path: &str) -> std::io::Result<()>;
 }
 
 pub struct RealFileSystem;
@@ -117,6 +118,9 @@ impl FileSystem for RealFileSystem {
     fn remove_files(&self, files: Vec<String>) -> Result<()> {
         // Call the actual remove_files function
         ::fs::remove_files(files)
+    }
+    fn remove_dir_all(&self, path: &str) -> std::io::Result<()> {
+        std::fs::remove_dir_all(path)
     }
 }
 
@@ -585,7 +589,6 @@ pub fn de_provision<F: FileSystem>(data_dir: &str, fs: F, event_tx: Sender<Event
         }
     }
 
-    println!("****** files removed *******");
     //2. Event to stop all services
     match event_tx.send(Event::Provisioning(
         events::ProvisioningEvent::Deprovisioned,
@@ -660,9 +663,10 @@ pub fn de_provision<F: FileSystem>(data_dir: &str, fs: F, event_tx: Sender<Event
     //     }
     // }
 
+    println!("db_path: {}", db_path.display());
     //TODO: Move this to settings service on deprovision event
     //3. Delete db
-    match fs::remove_dir_all(&db_path) {
+    match fs.remove_dir_all(&db_path.to_str().unwrap()) {
         Ok(_) => {
             debug!(
                 func = fn_name,
@@ -1355,7 +1359,7 @@ async fn process_re_issue_certificate_request(
 mod tests {
     use super::*;
     use events::ProvisioningEvent;
-    use mockall::predicate::eq;
+    use mockall::predicate::{eq, str::contains};
     use tokio::sync::broadcast;
 
     #[tokio::test]
@@ -1547,6 +1551,7 @@ mod tests {
     async fn test_de_provision() {
         let (event_tx, _) = broadcast::channel(32);
         let event_tx_2 = event_tx.clone();
+
         let r_th = tokio::spawn(async move {
             let mut event_rx = event_tx_2.subscribe();
             let event: Event = event_rx.recv().await.unwrap();
@@ -1555,22 +1560,30 @@ mod tests {
                 Event::Provisioning(ProvisioningEvent::Deprovisioned)
             ));
         });
-        let data_dir = "~/.mecha_test";
-        let mut mock_fs = MockFileSystem::new();
-        mock_fs
-            .expect_remove_files()
-            .with(eq(vec![
-                (data_dir.to_owned() + constants::CERT_PATH),
-                (data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
-                (data_dir.to_owned() + constants::CSR_PATH),
-                (data_dir.to_owned() + constants::CA_BUNDLE_PATH),
-                (data_dir.to_owned() + constants::ROOT_CERT_PATH),
-            ]))
-            .returning(|_| Ok(()));
-        let res = de_provision(&data_dir, mock_fs, event_tx.clone());
-        println!("res: {:?}", res);
-        assert!(res.is_ok());
-        assert!(res.unwrap());
+        let m_th = tokio::spawn(async move {
+            let data_dir = "~/.mecha_test";
+            let mut mock_fs = MockFileSystem::new();
+            mock_fs
+                .expect_remove_files()
+                .with(eq(vec![
+                    (data_dir.to_owned() + constants::CERT_PATH),
+                    (data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
+                    (data_dir.to_owned() + constants::CSR_PATH),
+                    (data_dir.to_owned() + constants::CA_BUNDLE_PATH),
+                    (data_dir.to_owned() + constants::ROOT_CERT_PATH),
+                ]))
+                .returning(|_| Ok(()));
+
+            mock_fs
+                .expect_remove_dir_all()
+                .with(contains(".mecha_test/db"))
+                .returning(|_| Ok(()));
+            let res = de_provision(&data_dir, mock_fs, event_tx.clone());
+            println!("res: {:?}", res);
+            assert!(res.is_ok());
+            assert!(res.unwrap());
+        });
+        m_th.await.unwrap();
         r_th.await.unwrap();
     }
 }
