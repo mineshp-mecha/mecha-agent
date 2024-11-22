@@ -1,14 +1,12 @@
 use crate::errors::ProvisioningError;
 use crate::errors::ProvisioningErrorCodes;
 use ::fs::construct_dir_path;
-use ::fs::remove_files;
 use ::fs::safe_write_to_path;
 use agent_settings::constants;
 use anyhow::{bail, Result};
 use channel::recv_with_timeout;
 use crypto::random::generate_random_alphanumeric;
-use crypto::x509::generate_csr;
-use crypto::x509::generate_rsa_private_key;
+use crypto::x509;
 use events::Event;
 use futures::StreamExt;
 use identity::handler::IdentityMessage;
@@ -59,7 +57,7 @@ pub struct ProvisioningServerResponseGeneric<T> {
     pub payload: T,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProvisioningManifest {
     pub machine_id: String,
     pub cert_sign_url: String,
@@ -97,6 +95,7 @@ pub enum CertSignRequestType {
 }
 
 // Struct to hold the file paths and the associated byte data
+#[derive(Debug)]
 struct CertFiles<'a> {
     root_cert_path: &'a str,
     cert_path: &'a str,
@@ -386,6 +385,7 @@ pub async fn provision_by_code(
         }
     }
 
+    println!("provisioning event sent");
     match event_tx.send(Event::Provisioning(events::ProvisioningEvent::Provisioned)) {
         Ok(_) => trace!(
             func = fn_name,
@@ -433,7 +433,7 @@ async fn perform_cryptography_operation(
     let ca_bundle_path = data_dir.to_owned() + constants::CA_BUNDLE_PATH;
 
     // 2. Generate the private key based
-    match generate_rsa_private_key(&private_key_path) {
+    match x509::generate_rsa_private_key(&private_key_path) {
         Ok(_) => trace!(
             func = fn_name,
             package = PACKAGE_NAME,
@@ -451,7 +451,7 @@ async fn perform_cryptography_operation(
     }
 
     // 3. Generate the CSR, using above private key
-    match generate_csr(&csr_path, &private_key_path, machine_id) {
+    match x509::generate_csr(&csr_path, &private_key_path, machine_id) {
         Ok(_) => trace!(
             func = fn_name,
             package = PACKAGE_NAME,
@@ -517,6 +517,7 @@ async fn perform_cryptography_operation(
         cert: signed_certificates.cert.as_bytes(),
         ca_bundle: ca_bundle_str.as_bytes(),
     };
+    println!("cert_files: {:#?}", cert_files);
     // 5. Store the signed certificates in destination path
     match write_certificates_to_path(cert_files) {
         Ok(result) => {
@@ -544,7 +545,7 @@ pub fn de_provision(data_dir: &str, event_tx: Sender<Event>) -> Result<bool> {
     let fn_name = "de_provision";
     trace!(func = fn_name, package = PACKAGE_NAME, "init",);
     //1. Delete certs
-    match remove_files(vec![
+    match ::fs::remove_files(vec![
         &(data_dir.to_owned() + constants::CERT_PATH),
         &(data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
         &(data_dir.to_owned() + constants::CSR_PATH),
@@ -1046,6 +1047,7 @@ async fn sign_csr(
             )),
         },
     };
+    println!("csr sign response: {}", csr_string);
     let result: ProvisioningServerResponseGeneric<SignedCertificates> =
         match serde_json::from_str(&csr_string) {
             Ok(v) => v,
@@ -1334,9 +1336,9 @@ async fn process_re_issue_certificate_request(
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::broadcast;
-
     use super::*;
+    use events::ProvisioningEvent;
+    use tokio::sync::broadcast;
 
     #[tokio::test]
     async fn test_generate_code() {
@@ -1352,23 +1354,193 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lookup_manifest() {
-        let service_url = "https://services.sandbox-v1.mecha.build";
-        let code = "123456";
-        let result = lookup_manifest(&service_url, &code).await;
-        println!("result - {:?}", result);
+    async fn get_manifest_by_provisioning_code() {
+        // Define the mocked ProvisioningManifest response.
+        let mock_manifest = ProvisioningManifest {
+            machine_id: "12345".to_string(),
+            cert_sign_url: "https://example.com/cert-sign".to_string(),
+            cert_valid_upto: "2024-12-31T23:59:59Z".to_string(),
+        };
+
+        let payload: ProvisioningServerResponseGeneric<ProvisioningManifest> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_manifest.clone(),
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mut server = mockito::Server::new_async().await;
+        let mock_url = format!("http://{}", server.host_with_port());
+        println!("url mock server url: {}", server.host_with_port());
+        let code = "12345";
+        // Create a mock HTTP endpoint with the correct URL
+        let mock_url_path = format!("/v1/provisioning/manifest/find?code={}", code);
+        let mock = server
+            .mock("GET", mock_url_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+
+        // Call the function under test.
+        let manifest = lookup_manifest(&mock_url, code).await.unwrap();
+
+        assert_eq!(manifest.machine_id, "12345");
+        assert_eq!(manifest.cert_sign_url, "https://example.com/cert-sign");
+        assert_eq!(manifest.cert_valid_upto, "2024-12-31T23:59:59Z");
+
+        // Assert that the mock endpoint was hit
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_perform_cryptography_operations() {
+        // let _ = mock_server_for_sign_csr().await; // Error 501 not implemented
+        // Define the mocked ProvisioningManifest response.
+        let mock_signed_certificate = SignedCertificates {
+            cert: "cert".to_string(),
+            root_cert: "root_cert".to_string(),
+            ca_bundle: vec!["ca_bundle".to_string()],
+        };
+
+        let payload: ProvisioningServerResponseGeneric<SignedCertificates> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_signed_certificate,
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mut server = mockito::Server::new_async().await;
+        let mock_url = format!("http://{}", server.host_with_port());
+        let mock = server
+            .mock("POST", "/cert-sign")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+        let result = perform_cryptography_operation(
+            &mock_url,
+            "12345",
+            "/cert-sign",
+            "~/.mecha_test",
+            CertSignRequestType::Provision,
+        )
+        .await;
+        println!("result: {:?}", result);
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_provision_by_code() {
-        const CHANNEL_SIZE: usize = 32;
-        let (event_tx, _) = broadcast::channel(CHANNEL_SIZE);
-        let service_url = "https://services.sandbox-v1.mecha.build";
-        let code = "123456";
-        let data_dir = "/tmp";
-        let provision_result = provision_by_code(&service_url, &data_dir, code, event_tx).await;
-        println!("{:?}", provision_result);
-        assert!(provision_result.is_ok());
+    async fn get_machine_provisioned_by_code() {
+        // Define the mocked ProvisioningManifest response.
+        let mock_manifest = ProvisioningManifest {
+            machine_id: "12345".to_string(),
+            cert_sign_url: "/cert-sign".to_string(),
+            cert_valid_upto: "2024-12-31T23:59:59Z".to_string(),
+        };
+
+        let payload: ProvisioningServerResponseGeneric<ProvisioningManifest> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_manifest.clone(),
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mut server = mockito::Server::new_async().await;
+        println!("url mock server url: {}", server.host_with_port());
+        let code = "12345";
+        // Create a mock HTTP endpoint with the correct URL
+        let mock_url_path = format!("/v1/provisioning/manifest/find?code={}", code);
+        let _ = server
+            .mock("GET", mock_url_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+
+        let data_dir = "~/.mecha_test";
+        let mock_signed_certificate = SignedCertificates {
+            cert: "cert".to_string(),
+            root_cert: "root_cert".to_string(),
+            ca_bundle: vec!["ca_bundle".to_string()],
+        };
+
+        let payload: ProvisioningServerResponseGeneric<SignedCertificates> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_signed_certificate,
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mock_url = format!("http://{}", server.host_with_port());
+        let _ = server
+            .mock("POST", "/cert-sign")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+
+        let (event_tx, _) = broadcast::channel(32);
+        let event_tx_2 = event_tx.clone();
+        let r_th = tokio::spawn(async move {
+            let mut event_rx = event_tx_2.subscribe();
+            let event: Event = event_rx.recv().await.unwrap();
+            assert!(matches!(
+                event,
+                Event::Provisioning(ProvisioningEvent::Provisioned)
+            ));
+        });
+
+        let res = provision_by_code(&mock_url, data_dir, code, event_tx.clone()).await;
+        assert!(res.is_ok());
+        assert!(res.unwrap());
+        r_th.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_de_provision() {
+        let (event_tx, _) = broadcast::channel(32);
+        let event_tx_2 = event_tx.clone();
+        let r_th = tokio::spawn(async move {
+            let mut event_rx = event_tx_2.subscribe();
+            let event: Event = event_rx.recv().await.unwrap();
+            assert!(matches!(
+                event,
+                Event::Provisioning(ProvisioningEvent::Deprovisioned)
+            ));
+        });
+        let data_dir = "~/.mecha_test";
+        let res = de_provision(&data_dir, event_tx.clone());
+        assert!(res.is_ok());
+        assert!(res.unwrap());
+        r_th.await.unwrap();
     }
 }

@@ -140,7 +140,6 @@ pub fn remove_files(paths: Vec<&str>) -> Result<()> {
                 bail!(FsError::new(
                     FsErrorCodes::FileRemoveError,
                     format!("failed to remove file - {}", path),
-
                 ));
             }
         };
@@ -215,7 +214,6 @@ pub fn construct_dir_path(path: &str) -> Result<PathBuf> {
                     bail!(FsError::new(
                         FsErrorCodes::JoinPathError,
                         format!("failed to strip prefix - {}, error - {}", path, e),
-    
                     ));
                 }
             };
