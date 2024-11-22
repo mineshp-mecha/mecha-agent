@@ -13,6 +13,7 @@ use identity::handler::IdentityMessage;
 use messaging::handler::MessagingMessage;
 use messaging::Bytes;
 use messaging::Subscriber as NatsSubscriber;
+use mockall::automock;
 use reqwest::Client as RequestClient;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,20 @@ struct CertFiles<'a> {
     root_cert: &'a [u8],
     cert: &'a [u8],
     ca_bundle: &'a [u8],
+}
+
+#[automock]
+pub trait FileSystem {
+    fn remove_files(&self, files: Vec<String>) -> Result<()>;
+}
+
+pub struct RealFileSystem;
+
+impl FileSystem for RealFileSystem {
+    fn remove_files(&self, files: Vec<String>) -> Result<()> {
+        // Call the actual remove_files function
+        ::fs::remove_files(files)
+    }
 }
 
 pub async fn subscribe_to_nats(
@@ -541,16 +556,16 @@ async fn perform_cryptography_operation(
     Ok(true)
 }
 
-pub fn de_provision(data_dir: &str, event_tx: Sender<Event>) -> Result<bool> {
+pub fn de_provision<F: FileSystem>(data_dir: &str, fs: F, event_tx: Sender<Event>) -> Result<bool> {
     let fn_name = "de_provision";
     trace!(func = fn_name, package = PACKAGE_NAME, "init",);
     //1. Delete certs
-    match ::fs::remove_files(vec![
-        &(data_dir.to_owned() + constants::CERT_PATH),
-        &(data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
-        &(data_dir.to_owned() + constants::CSR_PATH),
-        &(data_dir.to_owned() + constants::CA_BUNDLE_PATH),
-        &(data_dir.to_owned() + constants::ROOT_CERT_PATH),
+    match fs.remove_files(vec![
+        (data_dir.to_owned() + constants::CERT_PATH),
+        (data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
+        (data_dir.to_owned() + constants::CSR_PATH),
+        (data_dir.to_owned() + constants::CA_BUNDLE_PATH),
+        (data_dir.to_owned() + constants::ROOT_CERT_PATH),
     ]) {
         Ok(_) => {
             trace!(
@@ -570,6 +585,7 @@ pub fn de_provision(data_dir: &str, event_tx: Sender<Event>) -> Result<bool> {
         }
     }
 
+    println!("****** files removed *******");
     //2. Event to stop all services
     match event_tx.send(Event::Provisioning(
         events::ProvisioningEvent::Deprovisioned,
@@ -1191,7 +1207,8 @@ pub async fn await_deprovision_message(
             continue;
         }
 
-        match de_provision(&data_dir, event_tx.clone()) {
+        let real_fs = RealFileSystem;
+        match de_provision(&data_dir, real_fs, event_tx.clone()) {
             Ok(_) => {
                 info!(
                     func = "init",
@@ -1338,6 +1355,7 @@ async fn process_re_issue_certificate_request(
 mod tests {
     use super::*;
     use events::ProvisioningEvent;
+    use mockall::predicate::eq;
     use tokio::sync::broadcast;
 
     #[tokio::test]
@@ -1538,7 +1556,19 @@ mod tests {
             ));
         });
         let data_dir = "~/.mecha_test";
-        let res = de_provision(&data_dir, event_tx.clone());
+        let mut mock_fs = MockFileSystem::new();
+        mock_fs
+            .expect_remove_files()
+            .with(eq(vec![
+                (data_dir.to_owned() + constants::CERT_PATH),
+                (data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
+                (data_dir.to_owned() + constants::CSR_PATH),
+                (data_dir.to_owned() + constants::CA_BUNDLE_PATH),
+                (data_dir.to_owned() + constants::ROOT_CERT_PATH),
+            ]))
+            .returning(|_| Ok(()));
+        let res = de_provision(&data_dir, mock_fs, event_tx.clone());
+        println!("res: {:?}", res);
         assert!(res.is_ok());
         assert!(res.unwrap());
         r_th.await.unwrap();
