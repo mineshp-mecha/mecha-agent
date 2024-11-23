@@ -10,6 +10,34 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use telemetry::config::init_logs_config;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
+
+#[derive(Parser, Debug)]
+struct StartCommand {
+    /// Path to the settings file
+    #[arg(short, long)]
+    settings: String,
+
+    #[arg(long = "server")]
+    init_grpc: bool,
+}
+#[derive(Debug, Parser)]
+enum MectlCommand {
+    #[command(about = "Start the agent")]
+    Start(StartCommand),
+    #[command(about = "Setup new machine")]
+    Setup(Setup),
+    #[command(about = "Machine details")]
+    Whoami(Whoami),
+    #[command(about = "Reset machine")]
+    Reset(Reset),
+}
+#[derive(Debug, Parser)] // requires `derive` feature
+#[command(name = "mectl")]
+#[command(about = "mecha agent CLI", long_about = None)]
+struct Mectl {
+    #[command(subcommand)]
+    command: MectlCommand,
+}
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setting tracing
@@ -26,6 +54,29 @@ async fn main() -> Result<()> {
         }
     };
 
+    let mectl = Mectl::parse();
+    match mectl.command {
+        MectlCommand::Setup(configure) => {
+            let _ = configure.run().await;
+        }
+        MectlCommand::Start(start) => {
+            // configure the global logger to use our opentelemetry logger
+            let _ = start_agent(start.init_grpc).await;
+        }
+        MectlCommand::Whoami(whoami) => {
+            let _ = whoami.run().await;
+        }
+        MectlCommand::Reset(reset) => {
+            let _ = reset.run().await;
+        }
+        _ => {
+            bail!("Command not found");
+        }
+    }
+    Ok(())
+}
+
+async fn start_agent(init_grpc: bool) -> Result<()> {
     // configure the global logger to use our opentelemetry logger
     let _ = init_logs_config();
     let logger_provider = opentelemetry::global::logger_provider();
@@ -49,5 +100,6 @@ async fn main() -> Result<()> {
         "tracing set up",
     );
     let _ = init_services().await;
+
     Ok(())
 }
