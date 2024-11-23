@@ -1,6 +1,6 @@
 use crate::service::{
     await_deprovision_message, await_re_issue_cert_message, de_provision, generate_code, ping,
-    provision_by_code, subscribe_to_nats, PingResponse,
+    provision_by_code, subscribe_to_nats, PingResponse, RealFileSystem,
 };
 use anyhow::{bail, Result};
 use events::Event;
@@ -14,7 +14,18 @@ use tracing::{error, info};
 
 const PACKAGE_NAME: &str = env!("CARGO_CRATE_NAME");
 
+pub struct Settings {
+    pub data_dir: String,
+    pub service_url: String,
+}
+pub struct ProvisioningOptions {
+    pub settings: Settings,
+    pub messaging_tx: mpsc::Sender<MessagingMessage>,
+    pub identity_tx: mpsc::Sender<IdentityMessage>,
+    pub event_tx: broadcast::Sender<Event>,
+}
 pub struct ProvisioningHandler {
+    settings: Settings,
     identity_tx: mpsc::Sender<IdentityMessage>,
     messaging_tx: mpsc::Sender<MessagingMessage>,
     event_tx: broadcast::Sender<Event>,
@@ -32,24 +43,15 @@ pub enum ProvisioningMessage {
         code: String,
         reply_to: oneshot::Sender<Result<bool>>,
     },
-    ProvisionByManifest {
-        manifest: String,
-        reply_to: oneshot::Sender<Option<bool>>,
-    },
     Deprovision {
         reply_to: oneshot::Sender<Result<bool>>,
     },
 }
 
-pub struct ProvisioningOptions {
-    pub messaging_tx: mpsc::Sender<MessagingMessage>,
-    pub identity_tx: mpsc::Sender<IdentityMessage>,
-    pub event_tx: broadcast::Sender<Event>,
-}
-
 impl ProvisioningHandler {
     pub fn new(options: ProvisioningOptions) -> Self {
         Self {
+            settings: options.settings,
             identity_tx: options.identity_tx,
             messaging_tx: options.messaging_tx,
             event_tx: options.event_tx,
@@ -74,6 +76,8 @@ impl ProvisioningHandler {
         let identity_tx = self.identity_tx.clone();
         let event_tx = self.event_tx.clone();
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(50));
+        let data_dir = self.settings.data_dir.clone();
+        let service_url = self.settings.service_url.clone();
         let subscribers = match subscribe_to_nats(identity_tx.clone(), messaging_tx.clone()).await {
             Ok(v) => v,
             Err(e) => {
@@ -88,13 +92,14 @@ impl ProvisioningHandler {
         };
         let mut futures = JoinSet::new();
         futures.spawn(await_deprovision_message(
+            data_dir.clone(),
             identity_tx.clone(),
             event_tx.clone(),
             subscribers.de_provisioning_request.unwrap(),
         ));
         futures.spawn(await_re_issue_cert_message(
-            identity_tx.clone(),
-            event_tx.clone(),
+            service_url,
+            data_dir,
             subscribers.re_issue_certificate.unwrap(),
         ));
         // create spawn for timer
@@ -148,7 +153,7 @@ impl ProvisioningHandler {
 
                     match msg.unwrap() {
                         ProvisioningMessage::Ping { reply_to } => {
-                            let response = ping().await;
+                            let response = ping(&self.settings.service_url).await;
                             let _ = reply_to.send(response);
                         }
                         ProvisioningMessage::GenerateCode { reply_to } => {
@@ -156,14 +161,12 @@ impl ProvisioningHandler {
                             let _ = reply_to.send(code);
                         }
                         ProvisioningMessage::ProvisionByCode { code, reply_to } => {
-                            let status = provision_by_code(code, self.event_tx.clone()).await;
+                            let status = provision_by_code(&self.settings.service_url, &self.settings.data_dir, &code, self.event_tx.clone()).await;
                             let _ = reply_to.send(status);
                         }
-                        ProvisioningMessage::ProvisionByManifest { manifest, reply_to } => {
-                            let _ = reply_to.send(Some(true));
-                        }
                         ProvisioningMessage::Deprovision { reply_to } => {
-                            let status = de_provision(self.event_tx.clone());
+                            let real_fs = RealFileSystem;
+                            let status = de_provision(&self.settings.data_dir, real_fs, self.event_tx.clone());
                             let _ = reply_to.send(status);
                         }
                     };

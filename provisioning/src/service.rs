@@ -1,35 +1,28 @@
 use crate::errors::ProvisioningError;
 use crate::errors::ProvisioningErrorCodes;
 use ::fs::construct_dir_path;
-use ::fs::remove_files;
 use ::fs::safe_write_to_path;
-use agent_settings::provisioning::CertificatePaths;
-use agent_settings::read_settings_yml;
-use agent_settings::AgentSettings;
+use agent_settings::constants;
 use anyhow::{bail, Result};
 use channel::recv_with_timeout;
 use crypto::random::generate_random_alphanumeric;
-use crypto::x509::generate_csr;
-use crypto::x509::generate_rsa_private_key;
+use crypto::x509;
 use events::Event;
 use futures::StreamExt;
 use identity::handler::IdentityMessage;
 
-use kv_store::KeyValueStoreClient;
-use messaging::async_nats::error;
 use messaging::handler::MessagingMessage;
 use messaging::Bytes;
 use messaging::Subscriber as NatsSubscriber;
+use mockall::automock;
 use reqwest::Client as RequestClient;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::str;
-use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::task::JoinSet;
 use tracing::error;
 use tracing::{debug, info, trace, warn};
 
@@ -66,7 +59,7 @@ pub struct ProvisioningServerResponseGeneric<T> {
     pub payload: T,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProvisioningManifest {
     pub machine_id: String,
     pub cert_sign_url: String,
@@ -101,6 +94,31 @@ pub enum ProvisioningSubject {
 pub enum CertSignRequestType {
     Provision,
     ReIssue,
+}
+// Struct to hold the file paths and the associated byte data
+#[derive(Debug)]
+struct CertFiles<'a> {
+    root_cert_path: &'a str,
+    cert_path: &'a str,
+    ca_bundle_path: &'a str,
+    root_cert: &'a [u8],
+    cert: &'a [u8],
+    ca_bundle: &'a [u8],
+}
+#[automock]
+pub trait FileSystem {
+    fn remove_files(&self, files: Vec<String>) -> Result<()>;
+    fn remove_dir_all(&self, path: &str) -> std::io::Result<()>;
+}
+pub struct RealFileSystem;
+impl FileSystem for RealFileSystem {
+    fn remove_files(&self, files: Vec<String>) -> Result<()> {
+        // Call the actual remove_files function
+        ::fs::remove_files(files)
+    }
+    fn remove_dir_all(&self, path: &str) -> std::io::Result<()> {
+        std::fs::remove_dir_all(path)
+    }
 }
 pub async fn subscribe_to_nats(
     identity_tx: mpsc::Sender<IdentityMessage>,
@@ -196,27 +214,16 @@ pub async fn subscribe_to_nats(
     Ok(provisioning_subscribers)
 }
 
-pub async fn ping() -> Result<PingResponse> {
+pub async fn ping(service_url: &str) -> Result<PingResponse> {
     let fn_name = "ping";
     trace!(func = fn_name, package = PACKAGE_NAME, "init");
-    let settings: AgentSettings = match read_settings_yml() {
-        Ok(settings) => settings,
-        Err(_) => {
-            warn!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "settings.yml not found, using default settings"
-            );
-            AgentSettings::default()
-        }
-    };
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .unwrap();
 
     let result = client
-        .get(format!("{}/v1/ping", settings.provisioning.server_url).as_str())
+        .get(format!("{}/v1/ping", service_url).as_str())
         .header("CONTENT_TYPE", "application/json")
         .header("ACCEPT", "application/json")
         .send()
@@ -243,7 +250,6 @@ pub async fn ping() -> Result<PingResponse> {
                         bail!(ProvisioningError::new(
                             ProvisioningErrorCodes::UnauthorizedError,
                             format!("ping call returned unauthorized error num - {}", 1002,),
-    
                         ))
                     }
                     StatusCode::NOT_FOUND => {
@@ -256,7 +262,6 @@ pub async fn ping() -> Result<PingResponse> {
                         bail!(ProvisioningError::new(
                             ProvisioningErrorCodes::NotFoundError,
                             format!("ping call returned not found error num - {}", 1003,),
-    
                         ))
                     }
                     StatusCode::BAD_REQUEST => {
@@ -269,7 +274,6 @@ pub async fn ping() -> Result<PingResponse> {
                         bail!(ProvisioningError::new(
                             ProvisioningErrorCodes::BadRequestError,
                             format!("ping call returned bad request num - {}", 1004,),
-    
                         ))
                     }
                     StatusCode::INTERNAL_SERVER_ERROR => {
@@ -282,7 +286,6 @@ pub async fn ping() -> Result<PingResponse> {
                         bail!(ProvisioningError::new(
                             ProvisioningErrorCodes::InternalServerError,
                             format!("ping call returned internal server error num - {}", 1005,),
-    
                         ))
                     }
                     _ => {
@@ -295,7 +298,6 @@ pub async fn ping() -> Result<PingResponse> {
                         bail!(ProvisioningError::new(
                             ProvisioningErrorCodes::UnknownError,
                             format!("ping call returned unknown error num - {}", 1006,),
-    
                         ))
                     }
                 }
@@ -343,7 +345,12 @@ pub fn generate_code() -> Result<String> {
     4. Sign the certificate using the cert signing url in the manifest
     5. Store the certificate, intermediate and root in the target path
 */
-pub async fn provision_by_code(code: String, event_tx: Sender<Event>) -> Result<bool> {
+pub async fn provision_by_code(
+    service_url: &str,
+    data_dir: &str,
+    code: &str,
+    event_tx: Sender<Event>,
+) -> Result<bool> {
     let fn_name = "provision_by_code";
     tracing::trace!(
         func = fn_name,
@@ -351,20 +358,8 @@ pub async fn provision_by_code(code: String, event_tx: Sender<Event>) -> Result<
         "init code - {:?}",
         code
     );
-
-    let settings: AgentSettings = match read_settings_yml() {
-        Ok(settings) => settings,
-        Err(_) => {
-            warn!(
-                func = "provision_me",
-                package = PACKAGE_NAME,
-                "settings.yml not found, using default settings"
-            );
-            AgentSettings::default()
-        }
-    };
     // 1. Lookup the manifest, if lookup fails with not found then return error
-    let manifest = match lookup_manifest(&settings, &code).await {
+    let manifest = match lookup_manifest(service_url, code).await {
         Ok(manifest) => {
             debug!(
                 func = fn_name,
@@ -385,9 +380,10 @@ pub async fn provision_by_code(code: String, event_tx: Sender<Event>) -> Result<
         } // throw error from manifest lookup
     };
     match perform_cryptography_operation(
-        manifest.machine_id,
-        manifest.cert_sign_url,
-        settings,
+        service_url,
+        &manifest.machine_id,
+        &manifest.cert_sign_url,
+        data_dir,
         CertSignRequestType::Provision,
     )
     .await
@@ -435,14 +431,23 @@ pub async fn provision_by_code(code: String, event_tx: Sender<Event>) -> Result<
     Ok(true)
 }
 async fn perform_cryptography_operation(
-    machine_id: String,
-    cert_sign_url: String,
-    settings: AgentSettings,
+    service_url: &str,
+    machine_id: &str,
+    cert_sign_url: &str,
+    data_dir: &str,
     request_type: CertSignRequestType,
 ) -> Result<bool> {
     let fn_name = "perform_cryptography_operation";
+
+    // Construct the paths for the certificates
+    let private_key_path = data_dir.to_owned() + constants::PRIVATE_KEY_PATH;
+    let csr_path = data_dir.to_owned() + constants::CSR_PATH;
+    let root_cert_path = data_dir.to_owned() + constants::ROOT_CERT_PATH;
+    let cert_path = data_dir.to_owned() + constants::CERT_PATH;
+    let ca_bundle_path = data_dir.to_owned() + constants::CA_BUNDLE_PATH;
+
     // 2. Generate the private key based
-    match generate_rsa_private_key(&settings.provisioning.paths.machine.private_key) {
+    match x509::generate_rsa_private_key(&private_key_path) {
         Ok(_) => trace!(
             func = fn_name,
             package = PACKAGE_NAME,
@@ -453,18 +458,14 @@ async fn perform_cryptography_operation(
                 func = fn_name,
                 package = PACKAGE_NAME,
                 "error generating private key on path - {}",
-                &settings.provisioning.paths.machine.private_key
+                private_key_path
             );
             bail!(e)
         }
     }
 
     // 3. Generate the CSR, using above private key
-    match generate_csr(
-        &settings.provisioning.paths.machine.csr,
-        &settings.provisioning.paths.machine.private_key,
-        machine_id.as_str().clone(),
-    ) {
+    match x509::generate_csr(&csr_path, &private_key_path, machine_id) {
         Ok(_) => trace!(
             func = fn_name,
             package = PACKAGE_NAME,
@@ -483,10 +484,10 @@ async fn perform_cryptography_operation(
 
     // 4. Sign the CSR using the cert signing url
     let signed_certificates = match sign_csr(
-        &settings.provisioning.server_url,
-        &settings.provisioning.paths.machine.csr,
-        &machine_id.clone(),
-        &cert_sign_url,
+        service_url,
+        &csr_path,
+        machine_id,
+        cert_sign_url,
         request_type,
     )
     .await
@@ -521,15 +522,20 @@ async fn perform_cryptography_operation(
             bail!(err)
         }
     };
+
+    let cert_files = CertFiles {
+        root_cert_path: &root_cert_path,
+        cert_path: &cert_path,
+        ca_bundle_path: &ca_bundle_path,
+        root_cert: signed_certificates.root_cert.as_bytes(),
+        cert: signed_certificates.cert.as_bytes(),
+        ca_bundle: ca_bundle_str.as_bytes(),
+    };
+    println!("cert_files: {:#?}", cert_files);
     // 5. Store the signed certificates in destination path
-    match write_certificates_to_path(
-        &settings.provisioning.paths,
-        signed_certificates.root_cert.as_bytes(),
-        signed_certificates.cert.as_bytes(),
-        ca_bundle_str.as_bytes(),
-    ) {
+    match write_certificates_to_path(cert_files) {
         Ok(result) => {
-            trace!(
+            info!(
                 func = fn_name,
                 package = PACKAGE_NAME,
                 "certificates written successfully",
@@ -541,7 +547,7 @@ async fn perform_cryptography_operation(
                 func = fn_name,
                 package = PACKAGE_NAME,
                 "error writing certificates to path - {:?}",
-                &settings.provisioning.paths
+                e
             );
             bail!(e)
         }
@@ -549,27 +555,16 @@ async fn perform_cryptography_operation(
     Ok(true)
 }
 
-pub fn de_provision(event_tx: Sender<Event>) -> Result<bool> {
+pub fn de_provision<F: FileSystem>(data_dir: &str, fs: F, event_tx: Sender<Event>) -> Result<bool> {
     let fn_name = "de_provision";
     trace!(func = fn_name, package = PACKAGE_NAME, "init",);
-    let settings: AgentSettings = match read_settings_yml() {
-        Ok(settings) => settings,
-        Err(_) => {
-            warn!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "settings.yml not found, using default settings"
-            );
-            AgentSettings::default()
-        }
-    };
     //1. Delete certs
-    match remove_files(vec![
-        &settings.provisioning.paths.machine.cert,
-        &settings.provisioning.paths.machine.private_key,
-        &settings.provisioning.paths.machine.csr,
-        &settings.provisioning.paths.ca_bundle.cert,
-        &settings.provisioning.paths.root.cert,
+    match fs.remove_files(vec![
+        (data_dir.to_owned() + constants::CERT_PATH),
+        (data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
+        (data_dir.to_owned() + constants::CSR_PATH),
+        (data_dir.to_owned() + constants::CA_BUNDLE_PATH),
+        (data_dir.to_owned() + constants::ROOT_CERT_PATH),
     ]) {
         Ok(_) => {
             trace!(
@@ -614,7 +609,10 @@ pub fn de_provision(event_tx: Sender<Event>) -> Result<bool> {
             ));
         }
     }
-    let db_path = match construct_dir_path(&settings.settings.storage.path) {
+
+    //TODO: Move this to settings service on deprovision event
+    let storage_path = data_dir.to_owned() + constants::DB_PATH;
+    let db_path = match construct_dir_path(&storage_path) {
         Ok(path) => {
             debug!(
                 func = fn_name,
@@ -633,36 +631,14 @@ pub fn de_provision(event_tx: Sender<Event>) -> Result<bool> {
             );
             bail!(ProvisioningError::new(
                 ProvisioningErrorCodes::SettingsDatabaseDeleteError,
-                format!(
-                    "error constructing db path - {} - {}",
-                    &settings.settings.storage.path, e
-                ),
+                format!("error constructing db path - {}", e),
             ))
         }
     };
 
-    // 2. Flush database
-    let key_value_store = KeyValueStoreClient::new();
-    match key_value_store.flush_database() {
-        Ok(_) => {
-            trace!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "db flushed successfully"
-            )
-        }
-        Err(e) => {
-            error!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "error flushing db - {}",
-                e
-            );
-            bail!(e);
-        }
-    }
+    //TODO: Move this to settings service on deprovision event
     //3. Delete db
-    match fs::remove_dir_all(&db_path) {
+    match fs.remove_dir_all(&db_path.to_str().unwrap()) {
         Ok(_) => {
             debug!(
                 func = fn_name,
@@ -695,7 +671,7 @@ pub fn de_provision(event_tx: Sender<Event>) -> Result<bool> {
     Ok(true)
 }
 
-async fn lookup_manifest(settings: &AgentSettings, code: &str) -> Result<ProvisioningManifest> {
+async fn lookup_manifest(service_url: &str, code: &str) -> Result<ProvisioningManifest> {
     let fn_name = "lookup_manifest";
     debug!(
         func = fn_name,
@@ -704,8 +680,10 @@ async fn lookup_manifest(settings: &AgentSettings, code: &str) -> Result<Provisi
         code
     );
     let url = format!(
-        "{}/v1/provisioning/manifest/find?code={}",
-        settings.provisioning.server_url, code
+        "{}{}{}",
+        service_url,
+        constants::FIND_MANIFEST_URL_QUERY_PATH,
+        code
     );
     debug!(
         func = fn_name,
@@ -821,93 +799,88 @@ async fn lookup_manifest(settings: &AgentSettings, code: &str) -> Result<Provisi
     Ok(manifest_response.payload)
 }
 
-fn write_certificates_to_path(
-    certificate_paths: &CertificatePaths,
-    root_cert: &[u8],
-    cert: &[u8],
-    ca_bundle: &[u8],
-) -> Result<bool> {
+fn write_certificates_to_path(cert_files: CertFiles) -> Result<bool> {
     let fn_name = "write_certificates_to_path";
     debug!(
         func = fn_name,
         package = PACKAGE_NAME,
         "cert path - {}",
-        certificate_paths.machine.cert,
+        &cert_files.cert_path,
     );
 
     // save the machine certificate
-    match safe_write_to_path(&certificate_paths.machine.cert, cert) {
+    match safe_write_to_path(&cert_files.cert_path, &cert_files.cert) {
         Ok(_) => debug!(
             func = fn_name,
             package = PACKAGE_NAME,
             "machine certificate saved in path - {}",
-            &certificate_paths.machine.cert
+            &cert_files.cert_path
         ),
         Err(e) => {
             error!(
                 func = fn_name,
                 package = PACKAGE_NAME,
                 "error saving machine certificate in path - {} - {}",
-                &certificate_paths.machine.cert,
+                &cert_files.cert_path,
                 e
             );
             bail!(ProvisioningError::new(
                 ProvisioningErrorCodes::CertificateWriteError,
                 format!(
                     "error saving machine certificate in path - {} - {}",
-                    &certificate_paths.machine.cert, e
+                    &cert_files.cert_path, e
                 ),
             ))
         }
     }
 
     // save the intermediate certificate
-    match safe_write_to_path(&certificate_paths.ca_bundle.cert, ca_bundle) {
+    match safe_write_to_path(&cert_files.ca_bundle_path, &cert_files.ca_bundle) {
         Ok(_) => debug!(
             func = fn_name,
             package = PACKAGE_NAME,
             "ca_bundle certificate saved in path - {}",
-            &certificate_paths.ca_bundle.cert
+            &cert_files.ca_bundle_path
         ),
         Err(e) => {
             error!(
                 func = fn_name,
                 package = PACKAGE_NAME,
                 "error saving ca_bundle certificate in path - {} - {}",
-                &certificate_paths.ca_bundle.cert,
+                &cert_files.ca_bundle_path,
                 e
             );
             bail!(ProvisioningError::new(
                 ProvisioningErrorCodes::CertificateWriteError,
                 format!(
                     "error saving ca_bundle certificate in path - {} - {}",
-                    &certificate_paths.ca_bundle.cert, e
+                    &cert_files.ca_bundle_path, e
                 ),
             ))
         }
     }
 
     // save the root certificate
-    match safe_write_to_path(&certificate_paths.root.cert, root_cert) {
+    match safe_write_to_path(&cert_files.root_cert_path, &cert_files.root_cert) {
         Ok(_) => debug!(
             func = fn_name,
             package = PACKAGE_NAME,
             "root certificate saved in path - {}",
-            &certificate_paths.root.cert
+            &cert_files.root_cert_path
         ),
         Err(e) => {
             error!(
                 func = fn_name,
                 package = PACKAGE_NAME,
                 "error saving root certificate in path - {} - {}",
-                &certificate_paths.root.cert,
+                &cert_files.root_cert_path,
                 e
             );
             bail!(ProvisioningError::new(
                 ProvisioningErrorCodes::CertificateWriteError,
                 format!(
                     "error saving root certificate in path - {} - {}",
-                    &certificate_paths.root.cert, e
+                    &cert_files.root_cert_path, e
                 ),
             ))
         }
@@ -1164,6 +1137,7 @@ fn parse_message_payload(payload: Bytes) -> Result<DeprovisionRequest> {
 }
 
 pub async fn await_deprovision_message(
+    data_dir: String,
     identity_tx: mpsc::Sender<IdentityMessage>,
     event_tx: Sender<Event>,
     mut subscriber: NatsSubscriber,
@@ -1208,7 +1182,8 @@ pub async fn await_deprovision_message(
             continue;
         }
 
-        match de_provision(event_tx.clone()) {
+        let real_fs = RealFileSystem;
+        match de_provision(&data_dir, real_fs, event_tx.clone()) {
             Ok(_) => {
                 info!(
                     func = "init",
@@ -1232,8 +1207,8 @@ pub async fn await_deprovision_message(
 }
 
 pub async fn await_re_issue_cert_message(
-    identity_tx: mpsc::Sender<IdentityMessage>,
-    event_tx: Sender<Event>,
+    service_url: String,
+    data_dir: String,
     mut subscriber: NatsSubscriber,
 ) -> Result<()> {
     let fn_name = "await_re_issue_cert_message";
@@ -1241,8 +1216,13 @@ pub async fn await_re_issue_cert_message(
     while let Some(message) = subscriber.next().await {
         println!("message received on re issue certificate");
         // convert payload to string
-        match process_re_issue_certificate_request(message.subject.to_string(), message.payload)
-            .await
+        match process_re_issue_certificate_request(
+            &service_url,
+            &data_dir,
+            message.subject.as_str(),
+            message.payload,
+        )
+        .await
         {
             Ok(_) => {}
             Err(e) => {
@@ -1258,20 +1238,13 @@ pub async fn await_re_issue_cert_message(
     Ok(())
 }
 
-async fn process_re_issue_certificate_request(subject: String, payload: Bytes) -> Result<bool> {
+async fn process_re_issue_certificate_request(
+    service_url: &str,
+    data_dir: &str,
+    subject: &str,
+    payload: Bytes,
+) -> Result<bool> {
     let fn_name = "process_services_re_issue_certificate_request";
-    let settings = match read_settings_yml() {
-        Ok(res) => res,
-        Err(err) => {
-            warn!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "failed to read settings yml file - {}",
-                err
-            );
-            AgentSettings::default()
-        }
-    };
     // parse payload
     let payload_str = match std::str::from_utf8(&payload) {
         Ok(s) => s,
@@ -1322,10 +1295,12 @@ async fn process_re_issue_certificate_request(subject: String, payload: Bytes) -
             ),
         ));
     };
+    let cert_sign_url = service_url.to_owned() + constants::CERT_SIGN_URL_QUERY_PATH;
     match perform_cryptography_operation(
-        request_payload.machine_id.clone(),
-        settings.provisioning.cert_sign_url.clone(),
-        settings,
+        service_url,
+        &request_payload.machine_id,
+        &cert_sign_url,
+        data_dir,
         CertSignRequestType::ReIssue,
     )
     .await
@@ -1347,4 +1322,237 @@ async fn process_re_issue_certificate_request(subject: String, payload: Bytes) -
         "re_issue certificate request processed!"
     );
     Ok(true)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_settings::constants;
+    use events::ProvisioningEvent;
+    use mockall::predicate::{eq, str::contains};
+    use tokio::sync::broadcast;
+
+    #[tokio::test]
+    async fn test_generate_code() {
+        let code = generate_code();
+        assert!(code.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ping() {
+        let service_url = "https://services.sandbox-v1.mecha.build";
+        let ping_result = ping(&service_url).await;
+        assert!(ping_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_manifest_by_provisioning_code() {
+        // Define the mocked ProvisioningManifest response.
+        let mock_manifest = ProvisioningManifest {
+            machine_id: "12345".to_string(),
+            cert_sign_url: "https://example.com/cert-sign".to_string(),
+            cert_valid_upto: "2024-12-31T23:59:59Z".to_string(),
+        };
+
+        let payload: ProvisioningServerResponseGeneric<ProvisioningManifest> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_manifest.clone(),
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mut server = mockito::Server::new_async().await;
+        let mock_url = format!("http://{}", server.host_with_port());
+        println!("url mock server url: {}", server.host_with_port());
+        let code = "12345";
+        // Create a mock HTTP endpoint with the correct URL
+        let mock_url_path = format!("/v1/provisioning/manifest/find?code={}", code);
+        let mock = server
+            .mock("GET", mock_url_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+
+        // Call the function under test.
+        let manifest = lookup_manifest(&mock_url, code).await.unwrap();
+
+        assert_eq!(manifest.machine_id, "12345");
+        assert_eq!(manifest.cert_sign_url, "https://example.com/cert-sign");
+        assert_eq!(manifest.cert_valid_upto, "2024-12-31T23:59:59Z");
+
+        // Assert that the mock endpoint was hit
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_perform_cryptography_operations() {
+        // let _ = mock_server_for_sign_csr().await; // Error 501 not implemented
+        // Define the mocked ProvisioningManifest response.
+        let mock_signed_certificate = SignedCertificates {
+            cert: "cert".to_string(),
+            root_cert: "root_cert".to_string(),
+            ca_bundle: vec!["ca_bundle".to_string()],
+        };
+
+        let payload: ProvisioningServerResponseGeneric<SignedCertificates> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_signed_certificate,
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mut server = mockito::Server::new_async().await;
+        let mock_url = format!("http://{}", server.host_with_port());
+        let mock = server
+            .mock("POST", "/cert-sign")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+        let result = perform_cryptography_operation(
+            &mock_url,
+            "12345",
+            "/cert-sign",
+            "~/.mecha_test",
+            CertSignRequestType::Provision,
+        )
+        .await;
+        println!("result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_machine_provisioned_by_code() {
+        // Define the mocked ProvisioningManifest response.
+        let mock_manifest = ProvisioningManifest {
+            machine_id: "12345".to_string(),
+            cert_sign_url: "/cert-sign".to_string(),
+            cert_valid_upto: "2024-12-31T23:59:59Z".to_string(),
+        };
+
+        let payload: ProvisioningServerResponseGeneric<ProvisioningManifest> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_manifest.clone(),
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mut server = mockito::Server::new_async().await;
+        println!("url mock server url: {}", server.host_with_port());
+        let code = "12345";
+        // Create a mock HTTP endpoint with the correct URL
+        let mock_url_path = format!("/v1/provisioning/manifest/find?code={}", code);
+        let _ = server
+            .mock("GET", mock_url_path.as_str())
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+
+        let data_dir = "~/.mecha_test";
+        let mock_signed_certificate = SignedCertificates {
+            cert: "cert".to_string(),
+            root_cert: "root_cert".to_string(),
+            ca_bundle: vec!["ca_bundle".to_string()],
+        };
+
+        let payload: ProvisioningServerResponseGeneric<SignedCertificates> =
+            ProvisioningServerResponseGeneric {
+                success: true,
+                status: "200 SUCCESS".to_string(),
+                status_code: 200,
+                message: None,
+                error_code: None,
+                sub_errors: None,
+                payload: mock_signed_certificate,
+            };
+
+        // Serialize the mock_manifest to JSON.
+        let mock_response_body = serde_json::to_string(&payload).unwrap();
+        let mock_url = format!("http://{}", server.host_with_port());
+        let _ = server
+            .mock("POST", "/cert-sign")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&mock_response_body)
+            .create_async()
+            .await;
+
+        let (event_tx, _) = broadcast::channel(32);
+        let event_tx_2 = event_tx.clone();
+        let r_th = tokio::spawn(async move {
+            let mut event_rx = event_tx_2.subscribe();
+            let event: Event = event_rx.recv().await.unwrap();
+            assert!(matches!(
+                event,
+                Event::Provisioning(ProvisioningEvent::Provisioned)
+            ));
+        });
+
+        let res = provision_by_code(&mock_url, data_dir, code, event_tx.clone()).await;
+        assert!(res.is_ok());
+        assert!(res.unwrap());
+        r_th.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_de_provision() {
+        let (event_tx, _) = broadcast::channel(32);
+        let event_tx_2 = event_tx.clone();
+
+        let r_th = tokio::spawn(async move {
+            let mut event_rx = event_tx_2.subscribe();
+            let event: Event = event_rx.recv().await.unwrap();
+            assert!(matches!(
+                event,
+                Event::Provisioning(ProvisioningEvent::Deprovisioned)
+            ));
+        });
+        let m_th = tokio::spawn(async move {
+            let data_dir = "~/.mecha_test";
+            let mut mock_fs = MockFileSystem::new();
+            mock_fs
+                .expect_remove_files()
+                .with(eq(vec![
+                    (data_dir.to_owned() + constants::CERT_PATH),
+                    (data_dir.to_owned() + constants::PRIVATE_KEY_PATH),
+                    (data_dir.to_owned() + constants::CSR_PATH),
+                    (data_dir.to_owned() + constants::CA_BUNDLE_PATH),
+                    (data_dir.to_owned() + constants::ROOT_CERT_PATH),
+                ]))
+                .returning(|_| Ok(()));
+
+            mock_fs
+                .expect_remove_dir_all()
+                .with(contains(".mecha_test/db"))
+                .returning(|_| Ok(()));
+            let res = de_provision(&data_dir, mock_fs, event_tx.clone());
+            println!("res: {:?}", res);
+            assert!(res.is_ok());
+            assert!(res.unwrap());
+        });
+        m_th.await.unwrap();
+        r_th.await.unwrap();
+    }
 }

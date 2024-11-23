@@ -12,6 +12,8 @@ RUN apt update && \
 
 
 COPY ./ ./
+# Run tests before building
+RUN cargo test --workspace
 RUN cargo build --release
 
 #######################

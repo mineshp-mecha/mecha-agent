@@ -4,7 +4,7 @@ use init_tracing_opentelemetry::tracing_subscriber_ext::{
     build_logger_text, build_loglevel_filter_layer, build_otel_layer,
 };
 
-use mecha_agent::init::init_services;
+use mecha_agent::init::init_handlers;
 use opentelemetry::global;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use telemetry::config::init_logs_config;
@@ -99,7 +99,6 @@ async fn start_agent(init_grpc: bool) -> Result<()> {
         result = "success",
         "tracing set up",
     );
-    let _ = init_services().await;
-
+    let _ = init_handlers(settings).await;
     Ok(())
 }

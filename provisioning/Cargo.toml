@@ -35,3 +35,5 @@ sha256 = { workspace = true }
 chrono = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }
+mockito = "1.6.1"
+mockall = "0.13.1"

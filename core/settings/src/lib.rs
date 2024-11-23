@@ -9,6 +9,7 @@ use settings::Settings;
 use status::StatusSettings;
 use std::{env, fmt, fs::File, path::PathBuf};
 use tracing::error;
+pub mod constants;
 pub mod messaging;
 pub mod networking;
 pub mod provisioning;
