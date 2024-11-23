@@ -1,4 +1,5 @@
 use crate::errors::{AgentError, AgentErrorCodes};
+use agent_settings::AgentSettings;
 use anyhow::{bail, Result};
 use app_services::handler::{AppServiceHandler, AppServiceMessage, AppServiceOptions};
 use grpc_server::GrpcServerOptions;
@@ -17,7 +18,8 @@ use tracing::error;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 const CHANNEL_SIZE: usize = 32;
 
-pub async fn init_services() -> Result<bool> {
+pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
+    let data_dir = "~/.mecha"; //TODO: remove in next iteration
     let (event_tx, _) = broadcast::channel(CHANNEL_SIZE);
     let (identity_t, identity_tx) = init_identity_service(IdentityOptions {
         event_tx: event_tx.clone(),
@@ -31,6 +33,10 @@ pub async fn init_services() -> Result<bool> {
     .await;
 
     let (prov_t, prov_tx) = init_provisioning_service(ProvisioningOptions {
+        settings: provisioning::handler::Settings {
+            service_url: settings.provisioning.server_url.clone(),
+            data_dir: data_dir.to_string(),
+        },
         identity_tx: identity_tx.clone(),
         messaging_tx: messaging_tx.clone(),
         event_tx: event_tx.clone(),
