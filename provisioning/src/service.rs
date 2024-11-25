@@ -24,7 +24,7 @@ use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::error;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 const PACKAGE_NAME: &str = env!("CARGO_CRATE_NAME");
 
@@ -1425,7 +1425,7 @@ mod tests {
         let mock_response_body = serde_json::to_string(&payload).unwrap();
         let mut server = mockito::Server::new_async().await;
         let mock_url = format!("http://{}", server.host_with_port());
-        let mock = server
+        let _mock = server
             .mock("POST", "/cert-sign")
             .with_status(200)
             .with_header("content-type", "application/json")

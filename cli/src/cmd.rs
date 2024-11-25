@@ -1,18 +1,18 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{command, Args};
+use clap::{command, Args, Parser};
 use identity::service::get_machine_details;
 use provisioning::service::{de_provision, generate_code, provision_by_code, RealFileSystem};
 use settings::service::get_settings_by_key;
 use tokio::time::{self, Instant};
 
-#[derive(Debug, Args)]
-#[command(about = "configure API Key for your account")]
+#[derive(Debug, Parser)]
+#[command(about = "Setup/Provisioning a machine")]
 pub struct Setup {
-    /// Import from filepath
-    #[arg(short = 'i', long = "import", value_name = "filepath")]
-    import: Vec<String>,
+    /// Path to the settings file
+    #[arg(short, long, default_value = "./settings.yml")]
+    pub settings: String,
 }
 
 impl Setup {
@@ -62,15 +62,13 @@ impl Setup {
 #[derive(Debug, Args)]
 #[command(about = "machine details")]
 pub struct Whoami {
-    /// Import from filepath
-    #[arg(short = 'w', long = "whoami", value_name = "filepath")]
-    import: Vec<String>,
+    /// Path to the settings file
+    #[arg(short, long, default_value = "./settings.yml")]
+    pub settings: String,
 }
 
 impl Whoami {
-    pub async fn run(&self) -> Result<()> {
-        let data_dir = "~/.mecha"; //TODO: get from settings
-
+    pub async fn run(&self, data_dir: &str) -> Result<()> {
         //TODO: figure how to print machine details on terminal
         let machine_details = match get_machine_details(data_dir) {
             Ok(v) => v,
@@ -105,13 +103,13 @@ impl Whoami {
 #[derive(Debug, Args)]
 #[command(about = "reset machine")]
 pub struct Reset {
-    /// Import from filepath
-    #[arg(short = 'r', long = "rest", value_name = "filepath")]
-    import: Vec<String>,
+    /// Path to the settings file
+    #[arg(short, long, default_value = "./settings.yml")]
+    pub settings: String,
 }
 
 impl Reset {
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(&self, data_dir: &str) -> Result<()> {
         let machine_name = match get_settings_by_key(String::from("identity.machine.name")).await {
             Ok(v) => v,
             Err(e) => {
@@ -134,7 +132,7 @@ impl Reset {
         let real_fs = RealFileSystem;
         match s.trim().to_lowercase().as_str() {
             "y" | "yes" => {
-                match de_provision("~/.mecha", real_fs, None) {
+                match de_provision(data_dir, real_fs, None) {
                     Ok(_) => {
                         println!("De-provisioning successful ...: DE-PROVISIONING SUCCESSFUL");
                     }

@@ -15,12 +15,13 @@ use telemetry::config::init_logs_config;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 
-#[derive(Parser, Debug)]
+#[derive(Debug, Parser)]
 struct StartCommand {
     /// Path to the settings file
     #[arg(short, long)]
     settings: String,
 
+    /// Initialize the grpc server
     #[arg(long = "server")]
     init_grpc: bool,
 }
@@ -48,7 +49,8 @@ async fn main() -> Result<()> {
     let mectl = Mectl::parse();
     match mectl.command {
         MectlCommand::Setup(configure) => {
-            let settings = read_settings_yml(None).unwrap();
+            let settings_file_path = configure.settings.clone();
+            let settings = read_settings_yml(Some(settings_file_path)).unwrap();
             let _ = configure
                 .run(&settings.data.dir, &settings.backend.service)
                 .await;
@@ -59,13 +61,14 @@ async fn main() -> Result<()> {
             let _ = start_agent(start.settings, start.init_grpc).await;
         }
         MectlCommand::Whoami(whoami) => {
-            let _ = whoami.run().await;
+            let settings_file_path = whoami.settings.clone();
+            let settings = read_settings_yml(Some(settings_file_path)).unwrap();
+            let _ = whoami.run(&settings.data.dir).await;
         }
         MectlCommand::Reset(reset) => {
-            let _ = reset.run().await;
-        }
-        _ => {
-            bail!("Command not found");
+            let settings_file_path = reset.settings.clone();
+            let settings = read_settings_yml(Some(settings_file_path)).unwrap();
+            let _ = reset.run(&settings.data.dir).await;
         }
     }
     Ok(())
