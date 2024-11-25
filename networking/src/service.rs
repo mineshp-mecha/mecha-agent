@@ -13,6 +13,7 @@ use messaging::{
     handler::MessagingMessage,
     Message,
 };
+use nats_client::NatsClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use settings::handler::SettingMessage;
@@ -107,7 +108,6 @@ pub async fn get_networking_subscriber(
                 bail!(NetworkingError::new(
                     NetworkingErrorCodes::ChannelSendMessageError,
                     format!("error sending subscriber message - {}", e),
-
                 ));
             }
         }
@@ -131,7 +131,6 @@ pub async fn get_networking_subscriber(
                         "error get networking subscriber - {:?}, error - {}",
                         &subject, e
                     ),
-
                 ));
             }
         };
@@ -142,7 +141,7 @@ pub async fn get_networking_subscriber(
 pub async fn configure_wireguard(settings_tx: Sender<SettingMessage>) -> Result<Wireguard> {
     let fn_name = "configure_wireguard";
     // read settings from settings.yml
-    let settings: AgentSettings = match read_settings_yml() {
+    let settings: AgentSettings = match read_settings_yml(None) {
         Ok(settings) => settings,
         Err(_) => {
             warn!(
@@ -193,7 +192,7 @@ pub async fn configure_wireguard(settings_tx: Sender<SettingMessage>) -> Result<
     let mut wireguard = Wireguard::new(settings.networking.wireguard.tun);
     let wg_config = wireguard::WgConfig {
         ip_address: ip_address,
-        port: settings.networking.wireguard.port,
+        port: settings.networking.wireguard.port as u32,
     };
     match wireguard.setup_wireguard(&wg_config, keys.secret_key.clone()) {
         Ok(_) => (),
@@ -722,7 +721,7 @@ pub async fn reconnect_messaging_service(
     messaging_tx: Sender<MessagingMessage>,
     new_setting: String,
     existing_settings: HashMap<String, String>,
-) -> Result<bool> {
+) -> Result<Option<NatsClient>> {
     let fn_name = "reconnect_messaging_service";
     match existing_settings.get("networking.enabled") {
         Some(setting) => {
@@ -732,7 +731,7 @@ pub async fn reconnect_messaging_service(
                     package = PACKAGE_NAME,
                     "networking settings are same, no need to reconnect"
                 );
-                return Ok(true);
+                return Ok(None);
             }
         }
         None => {
@@ -782,5 +781,5 @@ pub async fn reconnect_messaging_service(
         package = PACKAGE_NAME,
         "reconnect request completed",
     );
-    Ok(result)
+    Ok(Some(result))
 }

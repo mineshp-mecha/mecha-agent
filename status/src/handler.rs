@@ -1,4 +1,5 @@
-use anyhow::Result;
+use agent_settings::status::StatusSettings;
+use anyhow::{bail, Result};
 use events::Event;
 use identity::handler::IdentityMessage;
 use messaging::handler::MessagingMessage;
@@ -12,15 +13,19 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
-use crate::service::{get_time_interval, machine_platform_info, send_status, SendStatusOptions};
+use crate::{
+    errors::{StatusError, StatusErrorCodes},
+    service::{machine_platform_info, send_status, SendStatusOptions},
+};
 
 pub struct StatusHandler {
     event_tx: broadcast::Sender<Event>,
     messaging_tx: Sender<MessagingMessage>,
     identity_tx: Sender<IdentityMessage>,
     timer_token: Option<CancellationToken>,
+    settings: StatusSettings,
 }
 
 pub enum StatusMessage {
@@ -32,6 +37,7 @@ pub struct StatusOptions {
     pub event_tx: broadcast::Sender<Event>,
     pub messaging_tx: Sender<MessagingMessage>,
     pub identity_tx: Sender<IdentityMessage>,
+    pub settings: StatusSettings,
 }
 
 impl StatusHandler {
@@ -41,6 +47,7 @@ impl StatusHandler {
             messaging_tx: options.messaging_tx,
             identity_tx: options.identity_tx,
             timer_token: None,
+            settings: options.settings,
         }
     }
     pub async fn set_timer(&mut self) -> Result<()> {
@@ -57,11 +64,10 @@ impl StatusHandler {
         let timer_token_cloned = timer_token.clone();
         let messaging_tx = self.messaging_tx.clone();
         let identity_tx = self.identity_tx.clone();
-
+        let interval = self.settings.interval;
         // create spawn for timer
         let _: JoinHandle<Result<()>> = tokio::task::spawn(async move {
-            let interval_in_secs: u64 = get_time_interval();
-            let mut timer = tokio::time::interval(std::time::Duration::from_secs(interval_in_secs));
+            let mut timer = tokio::time::interval(std::time::Duration::from_secs(interval));
             loop {
                 select! {
                         _ = timer_token.cancelled() => {
@@ -104,7 +110,15 @@ impl StatusHandler {
             select! {
                     msg = message_rx.recv() => {
                         if msg.is_none() {
-                            continue;
+                            error!(
+                                func = "run",
+                                package = env!("CARGO_PKG_NAME"),
+                                "error receiving message"
+                            );
+                            bail!(StatusError::new(
+                                StatusErrorCodes::ChannelReceiveMessageError,
+                                "failed to receive message".to_string(),
+                            ));
                         }
 
                         match msg.unwrap() {

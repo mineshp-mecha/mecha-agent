@@ -39,7 +39,7 @@ impl NatsClient {
         &mut self,
         token: &str,
         inbox_prefix: &str,
-        event_tx: Sender<Event>,
+        event_tx: Option<Sender<Event>>,
     ) -> Result<bool> {
         trace!(
             func = "connect",
@@ -51,17 +51,19 @@ impl NatsClient {
         let key_pair = self.user_key_pair.clone();
         self.client = match async_nats::ConnectOptions::new()
             .event_callback(move |event: async_nats::Event| {
-                let tx = event_tx.clone();
+                let tx: Option<Sender<Event>> = event_tx.clone();
                 async move {
-                    match tx.clone().send(Event::Nats(event)) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!(
-                                func = "connect",
-                                package = PACKAGE_NAME,
-                                "error sending messaging service event on nats disconnect- {}",
-                                e
-                            );
+                    if tx.is_some() {
+                        match tx.unwrap().send(Event::Nats(event)) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!(
+                                    func = "connect",
+                                    package = PACKAGE_NAME,
+                                    "error sending messaging service event on nats disconnect- {}",
+                                    e
+                                );
+                            }
                         }
                     }
                 }
@@ -192,7 +194,7 @@ impl NatsClient {
             headers
         );
         match client
-            .publish_with_headers(String::from(subject), headers, data.clone())
+            .publish_with_headers(String::from(subject), headers, data)
             .await
         {
             Ok(v) => v,
@@ -236,7 +238,7 @@ impl NatsClient {
             }
         };
 
-        let response = match client.request(String::from(subject), data.clone()).await {
+        let response = match client.request(String::from(subject), data).await {
             Ok(v) => v,
             Err(e) => {
                 error!(

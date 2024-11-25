@@ -17,6 +17,7 @@ pub enum MessagingErrorCodes {
     ChannelSendMessageError,
     ChannelReceiveMessageError,
     EventSendError,
+    ServiceStartError,
 }
 
 impl fmt::Display for MessagingErrorCodes {
@@ -61,6 +62,9 @@ impl fmt::Display for MessagingErrorCodes {
             }
             MessagingErrorCodes::EventSendError => {
                 write!(f, "MessagingErrorCodes: EventSendError")
+            }
+            MessagingErrorCodes::ServiceStartError => {
+                write!(f, "MessagingErrorCodes: ServiceStartError")
             }
         }
     }

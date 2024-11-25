@@ -1,11 +1,10 @@
 use std::io::Read;
 
-use agent_settings::AgentSettings;
 use anyhow::{bail, Result};
 use base64::b64_encode;
 use fs::safe_open_file;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use x509::read_public_key;
 use x509_certificate::DigestAlgorithm;
 
@@ -26,20 +25,7 @@ pub struct MachineCert {
     pub ca_bundle: String,
     pub root_cert: String,
 }
-pub fn get_machine_id() -> Result<String> {
-    let settings = match agent_settings::read_settings_yml() {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(
-                func = "get_machine_id",
-                package = PACKAGE_NAME,
-                "error reading settings.yml - {}",
-                e
-            );
-            AgentSettings::default()
-        }
-    };
-    let public_key_path = settings.provisioning.paths.machine.cert.clone();
+pub fn get_machine_id(public_key_path: &str) -> Result<String> {
     let public_key_cert = match read_public_key(&public_key_path) {
         Ok(v) => v,
         Err(e) => {
@@ -68,20 +54,7 @@ pub fn get_machine_id() -> Result<String> {
         }
     }
 }
-pub fn get_serial_number() -> Result<String> {
-    let settings = match agent_settings::read_settings_yml() {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(
-                func = "get_serial_number",
-                package = PACKAGE_NAME,
-                "error reading settings.yml - {}",
-                e
-            );
-            AgentSettings::default()
-        }
-    };
-    let public_key_path = settings.provisioning.paths.machine.cert.clone();
+pub fn get_serial_number(public_key_path: &str) -> Result<String> {
     let public_key_cert = match read_public_key(&public_key_path) {
         Ok(v) => v,
         Err(e) => {
@@ -105,27 +78,11 @@ pub fn get_serial_number() -> Result<String> {
         .join(":");
     Ok(hex_string)
 }
-pub fn get_machine_cert() -> Result<MachineCert> {
-    let settings = match agent_settings::read_settings_yml() {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(
-                func = "get_machine_cert",
-                package = PACKAGE_NAME,
-                "error reading settings.yml - {}",
-                e
-            );
-            AgentSettings::default()
-        }
-    };
-
-    // Read public key
-    let public_key_path = settings.provisioning.paths.machine.cert.clone();
-
-    // Read intermediate and root certificates
-    let ca_bundle_path = settings.provisioning.paths.ca_bundle.cert.clone();
-    let root_cert_path = settings.provisioning.paths.root.cert.clone();
-
+pub fn get_machine_cert(
+    public_key_path: &str,
+    ca_bundle_path: &str,
+    root_cert_path: &str,
+) -> Result<MachineCert> {
     let (ca_bundle, root_cert) = read_certificates(ca_bundle_path, root_cert_path).unwrap();
     let public_key_cert = match read_public_key(&public_key_path) {
         Ok(v) => v,
@@ -154,7 +111,7 @@ pub fn get_machine_cert() -> Result<MachineCert> {
             ))
         }
     };
-    let serial_number = match get_serial_number() {
+    let serial_number = match get_serial_number(public_key_path) {
         Ok(v) => v,
         Err(e) => {
             error!(
@@ -178,8 +135,8 @@ pub fn get_machine_cert() -> Result<MachineCert> {
     Ok(response)
 }
 fn read_certificates(
-    intermediate_cert_path: String,
-    root_cert_path: String,
+    intermediate_cert_path: &str,
+    root_cert_path: &str,
 ) -> Result<(String, String)> {
     let intermediate_cert = match read_file_to_string(&intermediate_cert_path) {
         Ok(v) => v,

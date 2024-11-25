@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use crate::errors::{AgentError, AgentErrorCodes};
 use agent_settings::AgentSettings;
 use anyhow::{bail, Result};
@@ -18,15 +20,22 @@ use tracing::error;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 const CHANNEL_SIZE: usize = 32;
 
-pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
-    let data_dir = "~/.mecha"; //TODO: remove in next iteration
+pub async fn init_handlers(
+    settings: AgentSettings,
+    init_grpc: bool,
+    grpc_socket_addr: SocketAddr,
+) -> Result<bool> {
     let (event_tx, _) = broadcast::channel(CHANNEL_SIZE);
     let (identity_t, identity_tx) = init_identity_service(IdentityOptions {
+        settings: identity::handler::Settings {
+            data_dir: settings.data.dir.clone(),
+        },
         event_tx: event_tx.clone(),
     })
     .await;
 
     let (messaging_t, messaging_tx) = init_messaging_service(MessagingOptions {
+        nats_addr: settings.backend.messaging,
         event_tx: event_tx.clone(),
         identity_tx: identity_tx.clone(),
     })
@@ -34,8 +43,8 @@ pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
 
     let (prov_t, prov_tx) = init_provisioning_service(ProvisioningOptions {
         settings: provisioning::handler::Settings {
-            service_url: settings.provisioning.server_url.clone(),
-            data_dir: data_dir.to_string(),
+            service_url: settings.backend.service.clone(),
+            data_dir: settings.data.dir.clone(),
         },
         identity_tx: identity_tx.clone(),
         messaging_tx: messaging_tx.clone(),
@@ -44,6 +53,7 @@ pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
     .await;
 
     let (status_t, _status_tx) = init_status_service(StatusOptions {
+        settings: settings.status,
         event_tx: event_tx.clone(),
         messaging_tx: messaging_tx.clone(),
         identity_tx: identity_tx.clone(),
@@ -78,15 +88,6 @@ pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
     })
     .await;
 
-    let grpc_t = init_grpc_server(
-        prov_tx.clone(),
-        identity_tx.clone(),
-        messaging_tx.clone(),
-        setting_tx.clone(),
-        telemetry_tx.clone(),
-    )
-    .await;
-
     //TODO: remove this
     // let start_t = tokio::task::spawn(async move {
     //     sleep(Duration::from_secs(20)).await;
@@ -94,16 +95,27 @@ pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
     //     let _ = event_tx_1.send(Event::Provisioning(events::ProvisioningEvent::Provisioned));
     // });
 
+    if init_grpc {
+        let grpc_t = init_grpc_server(
+            prov_tx.clone(),
+            identity_tx.clone(),
+            messaging_tx.clone(),
+            setting_tx.clone(),
+            telemetry_tx.clone(),
+            grpc_socket_addr,
+        )
+        .await;
+        grpc_t.await.unwrap();
+    }
     // wait on all join handles
-    identity_t.await.unwrap();
-    messaging_t.await.unwrap();
-    prov_t.await.unwrap();
-    status_t.await.unwrap();
-    setting_t.await.unwrap();
-    networking_t.await.unwrap();
-    telemetry_t.await.unwrap();
-    app_service_t.await.unwrap();
-    grpc_t.await.unwrap();
+    let _ = identity_t.await.unwrap();
+    let _ = messaging_t.await.unwrap();
+    let _ = prov_t.await.unwrap();
+    let _ = status_t.await.unwrap();
+    let _ = setting_t.await.unwrap();
+    let _ = networking_t.await.unwrap();
+    let _ = telemetry_t.await.unwrap();
+    let _ = app_service_t.await.unwrap();
 
     Ok(true)
 }
@@ -173,7 +185,7 @@ async fn init_messaging_service(
     let (messaging_tx, messaging_rx) = mpsc::channel(CHANNEL_SIZE);
 
     let messaging_t = tokio::spawn(async move {
-        match MessagingHandler::new(opt).run(messaging_rx).await {
+        match MessagingHandler::new(opt).run(None, messaging_rx).await {
             Ok(_) => (),
             Err(e) => {
                 error!(
@@ -345,9 +357,11 @@ async fn init_grpc_server(
     messaging_tx: mpsc::Sender<MessagingMessage>,
     settings_tx: mpsc::Sender<SettingMessage>,
     telemetry_tx: mpsc::Sender<TelemetryMessage>,
+    grpc_socket_addr: SocketAddr,
 ) -> task::JoinHandle<()> {
     let grpc_t = tokio::spawn(async move {
         let _ = grpc_server::start_grpc_service(GrpcServerOptions {
+            grpc_socket_addr,
             provisioning_tx,
             identity_tx,
             messaging_tx,

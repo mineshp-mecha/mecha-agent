@@ -12,7 +12,7 @@ use hyper::{
 };
 use messaging::{async_nats::HeaderMap, handler::MessagingMessage};
 use messaging::{async_nats::Message, Subscriber as NatsSubscriber};
-use nats_client::Bytes;
+use nats_client::{Bytes, NatsClient};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{
@@ -699,7 +699,7 @@ pub async fn reconnect_messaging_service(
     messaging_tx: Sender<MessagingMessage>,
     new_setting: String,
     existing_settings: HashMap<String, String>,
-) -> Result<bool> {
+) -> Result<Option<NatsClient>> {
     let fn_name = "reconnect_messaging_service";
     match existing_settings.get("app_services.{app_id}.dns_name") {
         Some(setting) => {
@@ -709,7 +709,7 @@ pub async fn reconnect_messaging_service(
                     package = PACKAGE_NAME,
                     "networking settings are same, no need to reconnect"
                 );
-                return Ok(true);
+                return Ok(None);
             }
         }
         None => {
@@ -759,7 +759,7 @@ pub async fn reconnect_messaging_service(
         package = PACKAGE_NAME,
         "reconnect request completed",
     );
-    Ok(result)
+    Ok(Some(result))
 }
 
 pub fn parse_settings_payload(payload: String) -> Result<AppServiceSettings> {

@@ -8,17 +8,10 @@ pub struct TelemetrySettingsCollect {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TelemetrySettings {
     pub enabled: bool,
-    pub collect: TelemetrySettingsCollect,
 }
 
 impl Default for TelemetrySettings {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            collect: TelemetrySettingsCollect {
-                system: false,
-                user: false,
-            },
-        }
+        Self { enabled: true }
     }
 }

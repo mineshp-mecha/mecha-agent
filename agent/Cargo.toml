@@ -12,6 +12,7 @@ name = "mecha-agent"
 path = "src/bin/agent.rs"
 
 [dependencies]
+cli = { path = "../cli" }
 events = { path = "../core/events" }
 agent-settings = { path = "../core/settings" }
 app-services = { path = "../app-services" }
@@ -40,6 +41,7 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 bincode = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
+clap = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.10.2"

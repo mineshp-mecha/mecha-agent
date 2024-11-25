@@ -11,6 +11,7 @@ pub enum StatusErrorCodes {
     FetchMachineIdError,
     FetchLoadAverageError,
     FetchUptimeError,
+    ChannelReceiveMessageError,
 }
 
 impl fmt::Display for StatusErrorCodes {
@@ -37,6 +38,9 @@ impl fmt::Display for StatusErrorCodes {
             }
             StatusErrorCodes::FetchUptimeError => {
                 write!(f, "StatusErrorCodes: FetchUptimeError",)
+            }
+            StatusErrorCodes::ChannelReceiveMessageError => {
+                write!(f, "StatusErrorCodes: ChannelReceiveMessageError")
             }
         }
     }

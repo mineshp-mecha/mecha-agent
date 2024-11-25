@@ -21,6 +21,7 @@ channel = { path = "../commons/channel" }
 crypto = { path = "../commons/crypto" }
 fs = { path = "../commons/fs" }
 agent-settings = { path = "../core/settings" }
+nats-client = { path = "../commons/nats-client" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
