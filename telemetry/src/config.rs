@@ -28,7 +28,9 @@ pub fn init_otlp_configuration() -> metrics::Result<MeterProvider> {
         .build()
 }
 
-pub fn init_logs_config() -> Result<opentelemetry_sdk::logs::Logger, LogError> {
+pub fn init_logs_config(
+    exporter_endpoint: &str,
+) -> Result<opentelemetry_sdk::logs::Logger, LogError> {
     opentelemetry_otlp::new_pipeline()
         .logging()
         .with_log_config(Config::default().with_resource(Resource::new(vec![
@@ -41,7 +43,7 @@ pub fn init_logs_config() -> Result<opentelemetry_sdk::logs::Logger, LogError> {
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .tonic()
-                .with_endpoint("http://0.0.0.0:3001"),
+                .with_endpoint(exporter_endpoint),
         )
         .install_batch(runtime::Tokio)
 }

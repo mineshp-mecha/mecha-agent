@@ -3024,6 +3024,7 @@ dependencies = [
  "iprange",
  "local-ip-address",
  "messaging",
+ "nats-client",
  "nix",
  "reqwest",
  "serde",

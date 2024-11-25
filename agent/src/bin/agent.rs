@@ -1,4 +1,6 @@
-use agent_settings::{read_settings_yml, AgentSettings};
+use std::net::{IpAddr, SocketAddr};
+
+use agent_settings::{read_settings_yml, GrpcSettings};
 use anyhow::{bail, Result};
 use clap::Parser;
 use init_tracing_opentelemetry::tracing_subscriber_ext::{
@@ -68,8 +70,11 @@ async fn main() -> Result<()> {
 
 async fn start_agent(settings_path: String, init_grpc: bool) -> Result<()> {
     let settings = read_settings_yml(Some(settings_path)).unwrap();
-    // configure the global logger to use our opentelemetry logger
-    let _ = init_logs_config();
+
+    // Configure the global logger to use our opentelemetry logger
+    let socket_addr = get_exporter_endpoint(&settings.grpc);
+    let endpoint = format!("http://{}", socket_addr);
+    let _ = init_logs_config(endpoint.as_str());
     let logger_provider = opentelemetry::global::logger_provider();
     let tracing_bridge_layer = OpenTelemetryTracingBridge::new(&logger_provider);
     global::set_logger_provider(logger_provider);
@@ -90,6 +95,25 @@ async fn start_agent(settings_path: String, init_grpc: bool) -> Result<()> {
         result = "success",
         "tracing set up",
     );
-    let _ = init_handlers(settings, init_grpc).await;
+    let _ = init_handlers(settings, init_grpc, socket_addr).await;
     Ok(())
+}
+
+fn get_exporter_endpoint(server_settings: &GrpcSettings) -> SocketAddr {
+    let ip: IpAddr = match server_settings.addr.parse() {
+        Ok(ip) => ip,
+        Err(e) => {
+            tracing::error!(
+                func = "get_exporter_endpoint",
+                package = PACKAGE_NAME,
+                "error parsing ip address: {}",
+                e
+            );
+            IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
+        }
+    };
+    let port: u16 = server_settings.port as u16;
+
+    let socket_addr: SocketAddr = (ip, port).into();
+    socket_addr
 }

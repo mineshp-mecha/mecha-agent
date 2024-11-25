@@ -50,6 +50,7 @@ pub enum MessagingMessage {
     },
 }
 pub struct MessagingOptions {
+    pub nats_addr: String,
     pub event_tx: broadcast::Sender<Event>,
     pub identity_tx: mpsc::Sender<IdentityMessage>,
 }
@@ -62,11 +63,11 @@ pub struct MessagingHandler {
 }
 
 impl MessagingHandler {
-    pub fn new(options: MessagingOptions, nats_addr: String) -> Self {
+    pub fn new(options: MessagingOptions) -> Self {
         Self {
             event_tx: options.event_tx,
             status: ServiceStatus::STARTED,
-            messaging_client: new(nats_addr),
+            messaging_client: new(options.nats_addr),
             identity_tx: options.identity_tx,
         }
     }
