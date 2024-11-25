@@ -10,11 +10,16 @@ use tokio::{
 use tonic::async_trait;
 use tracing::info;
 
+pub struct Settings {
+    pub data_dir: String,
+}
 pub struct IdentityHandler {
+    pub settings: Settings,
     event_tx: broadcast::Sender<Event>,
     status: ServiceStatus,
 }
 pub struct IdentityOptions {
+    pub settings: Settings,
     pub event_tx: broadcast::Sender<Event>,
 }
 
@@ -33,6 +38,7 @@ pub enum IdentityMessage {
 impl IdentityHandler {
     pub fn new(options: IdentityOptions) -> Self {
         Self {
+            settings: options.settings,
             event_tx: options.event_tx,
             status: ServiceStatus::INACTIVE,
         }
@@ -43,8 +49,6 @@ impl IdentityHandler {
             package = env!("CARGO_PKG_NAME"),
             "identity service initiated"
         );
-        // Start the service
-        let _ = &self.start().await;
         loop {
             select! {
                 msg = message_rx.recv() => {
@@ -54,45 +58,20 @@ impl IdentityHandler {
 
                     match msg.unwrap() {
                         IdentityMessage::GetMachineId { reply_to } => {
-                            let machine_id_result = get_machine_id();
+                            let machine_id_result = get_machine_id(&self.settings.data_dir);
                             let _ = reply_to.send(machine_id_result);
                         }
                         IdentityMessage::GetProvisionStatus { reply_to } => {
-                            let provision_status = get_provision_status();
+                            let provision_status = get_provision_status(&self.settings.data_dir);
                             let _ = reply_to.send(provision_status);
                         }
                         IdentityMessage::GetMachineCert { reply_to } => {
-                            let cert = get_machine_cert();
+                            let cert = get_machine_cert(&self.settings.data_dir);
                             let _ = reply_to.send(cert);
                         }
                     };
                 }
             }
         }
-    }
-}
-
-#[async_trait]
-impl ServiceHandler for IdentityHandler {
-    async fn start(&mut self) -> Result<bool> {
-        self.status = ServiceStatus::STARTED;
-        Ok(true)
-    }
-
-    async fn stop(&mut self) -> Result<bool> {
-        self.status = ServiceStatus::STOPPED;
-        Ok(true)
-    }
-
-    fn get_status(&self) -> anyhow::Result<ServiceStatus> {
-        Ok(self.status)
-    }
-
-    fn is_stopped(&self) -> Result<bool> {
-        Ok(self.status == ServiceStatus::STOPPED)
-    }
-
-    fn is_started(&self) -> Result<bool> {
-        Ok(self.status == ServiceStatus::STARTED)
     }
 }

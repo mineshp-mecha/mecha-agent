@@ -18,7 +18,7 @@ use tracing::error;
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 const CHANNEL_SIZE: usize = 32;
 
-pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
+pub async fn init_handlers(settings: AgentSettings, init_grpc: bool) -> Result<bool> {
     let data_dir = "~/.mecha"; //TODO: remove in next iteration
     let (event_tx, _) = broadcast::channel(CHANNEL_SIZE);
     let (identity_t, identity_tx) = init_identity_service(IdentityOptions {
@@ -78,15 +78,6 @@ pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
     })
     .await;
 
-    let grpc_t = init_grpc_server(
-        prov_tx.clone(),
-        identity_tx.clone(),
-        messaging_tx.clone(),
-        setting_tx.clone(),
-        telemetry_tx.clone(),
-    )
-    .await;
-
     //TODO: remove this
     // let start_t = tokio::task::spawn(async move {
     //     sleep(Duration::from_secs(20)).await;
@@ -94,16 +85,26 @@ pub async fn init_handlers(settings: AgentSettings) -> Result<bool> {
     //     let _ = event_tx_1.send(Event::Provisioning(events::ProvisioningEvent::Provisioned));
     // });
 
+    if init_grpc {
+        let grpc_t = init_grpc_server(
+            prov_tx.clone(),
+            identity_tx.clone(),
+            messaging_tx.clone(),
+            setting_tx.clone(),
+            telemetry_tx.clone(),
+        )
+        .await;
+        grpc_t.await.unwrap();
+    }
     // wait on all join handles
-    identity_t.await.unwrap();
-    messaging_t.await.unwrap();
-    prov_t.await.unwrap();
-    status_t.await.unwrap();
-    setting_t.await.unwrap();
-    networking_t.await.unwrap();
-    telemetry_t.await.unwrap();
-    app_service_t.await.unwrap();
-    grpc_t.await.unwrap();
+    let _ = identity_t.await.unwrap();
+    let _ = messaging_t.await.unwrap();
+    let _ = prov_t.await.unwrap();
+    let _ = status_t.await.unwrap();
+    let _ = setting_t.await.unwrap();
+    let _ = networking_t.await.unwrap();
+    let _ = telemetry_t.await.unwrap();
+    let _ = app_service_t.await.unwrap();
 
     Ok(true)
 }

@@ -222,7 +222,7 @@ impl NetworkingHandler {
         );
         let fn_name = "run";
         // read settings from settings.yml
-        let settings: AgentSettings = match read_settings_yml() {
+        let settings: AgentSettings = match read_settings_yml(None) {
             Ok(settings) => settings,
             Err(_) => {
                 warn!(
@@ -237,13 +237,14 @@ impl NetworkingHandler {
         let (handshake_tx, mut handshake_rx) = mpsc::channel(32);
         let _ = self.init_handshake_handler(handshake_tx).await;
 
+        let disco_addr = format!(
+            "{}:{}",
+            settings.networking.discovery.addr, settings.networking.discovery.port
+        );
         // start the disco server
         let handshake_handler = self.handshake_handler.as_ref().unwrap();
         let handshake_channel_id = handshake_handler.channel_id.clone();
-        let mut handshake_disco_socket = match handshake_handler
-            .start_disco(settings.networking.disco_addr)
-            .await
-        {
+        let mut handshake_disco_socket = match handshake_handler.start_disco(disco_addr).await {
             Ok(s) => s,
             Err(e) => {
                 error!(
@@ -285,7 +286,7 @@ impl NetworkingHandler {
                             bail!(NetworkingError::new(
                                 NetworkingErrorCodes::NetworkingInitError, //todo: handshakeRunError
                                 format!("error init/run handshake service: {:?}", e),
-        
+
                             ));
                         }
                     }

@@ -128,7 +128,7 @@ impl HandshakeChannelHandler {
         println!("handshake request received");
         let fn_name = "send_handshake_manifest";
         info!(func = fn_name, package = PACKAGE_NAME, "init");
-        let settings: AgentSettings = match read_settings_yml() {
+        let settings: AgentSettings = match read_settings_yml(None) {
             Ok(settings) => settings,
             Err(_) => {
                 warn!(
@@ -159,7 +159,11 @@ impl HandshakeChannelHandler {
                 bail!(e)
             }
         };
-        let addr: SocketAddr = match settings.networking.disco_addr.parse() {
+        let disco_addr = format!(
+            "{}:{}",
+            settings.networking.discovery.addr, settings.networking.discovery.port
+        );
+        let addr: SocketAddr = match disco_addr.parse() {
             Ok(addr) => addr,
             Err(e) => {
                 warn!(

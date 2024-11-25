@@ -349,7 +349,7 @@ pub async fn provision_by_code(
     service_url: &str,
     data_dir: &str,
     code: &str,
-    event_tx: Sender<Event>,
+    event_tx_opt: Option<Sender<Event>>,
 ) -> Result<bool> {
     let fn_name = "provision_by_code";
     tracing::trace!(
@@ -400,28 +400,31 @@ pub async fn provision_by_code(
         }
     }
 
-    match event_tx.send(Event::Provisioning(events::ProvisioningEvent::Provisioned)) {
-        Ok(_) => trace!(
-            func = fn_name,
-            package = PACKAGE_NAME,
-            "provisioning event sent successfully"
-        ),
-        Err(e) => {
-            error!(
+    if let Some(event_tx) = event_tx_opt {
+        match event_tx.send(Event::Provisioning(events::ProvisioningEvent::Provisioned)) {
+            Ok(_) => trace!(
                 func = fn_name,
                 package = PACKAGE_NAME,
-                "error sending provisioning event - {}",
-                e
-            );
-            bail!(ProvisioningError::new(
-                ProvisioningErrorCodes::SendEventError,
-                format!(
-                    "error sending provisioning event, code: {}, error - {}",
-                    1001, e
-                ),
-            ));
+                "provisioning event sent successfully"
+            ),
+            Err(e) => {
+                error!(
+                    func = fn_name,
+                    package = PACKAGE_NAME,
+                    "error sending provisioning event - {}",
+                    e
+                );
+                bail!(ProvisioningError::new(
+                    ProvisioningErrorCodes::SendEventError,
+                    format!(
+                        "error sending provisioning event, code: {}, error - {}",
+                        1001, e
+                    ),
+                ));
+            }
         }
     }
+
     info!(
         func = fn_name,
         package = PACKAGE_NAME,
@@ -555,7 +558,11 @@ async fn perform_cryptography_operation(
     Ok(true)
 }
 
-pub fn de_provision<F: FileSystem>(data_dir: &str, fs: F, event_tx: Sender<Event>) -> Result<bool> {
+pub fn de_provision<F: FileSystem>(
+    data_dir: &str,
+    fs: F,
+    event_tx_opt: Option<Sender<Event>>,
+) -> Result<bool> {
     let fn_name = "de_provision";
     trace!(func = fn_name, package = PACKAGE_NAME, "init",);
     //1. Delete certs
@@ -585,28 +592,30 @@ pub fn de_provision<F: FileSystem>(data_dir: &str, fs: F, event_tx: Sender<Event
     }
 
     //2. Event to stop all services
-    match event_tx.send(Event::Provisioning(
-        events::ProvisioningEvent::Deprovisioned,
-    )) {
-        Ok(_) => trace!(
-            func = fn_name,
-            package = PACKAGE_NAME,
-            "de provisioning event sent successfully"
-        ),
-        Err(e) => {
-            error!(
+    if let Some(event_tx) = event_tx_opt {
+        match event_tx.send(Event::Provisioning(
+            events::ProvisioningEvent::Deprovisioned,
+        )) {
+            Ok(_) => trace!(
                 func = fn_name,
                 package = PACKAGE_NAME,
-                "error sending de provisioning event - {}",
-                e
-            );
-            bail!(ProvisioningError::new(
-                ProvisioningErrorCodes::SendEventError,
-                format!(
-                    "error sending de provisioning event, code:{}, error - {}",
-                    1001, e
-                ),
-            ));
+                "de provisioning event sent successfully"
+            ),
+            Err(e) => {
+                error!(
+                    func = fn_name,
+                    package = PACKAGE_NAME,
+                    "error sending de provisioning event - {}",
+                    e
+                );
+                bail!(ProvisioningError::new(
+                    ProvisioningErrorCodes::SendEventError,
+                    format!(
+                        "error sending de provisioning event, code:{}, error - {}",
+                        1001, e
+                    ),
+                ));
+            }
         }
     }
 
@@ -1183,7 +1192,7 @@ pub async fn await_deprovision_message(
         }
 
         let real_fs = RealFileSystem;
-        match de_provision(&data_dir, real_fs, event_tx.clone()) {
+        match de_provision(&data_dir, real_fs, Some(event_tx.clone())) {
             Ok(_) => {
                 info!(
                     func = "init",
@@ -1510,7 +1519,7 @@ mod tests {
             ));
         });
 
-        let res = provision_by_code(&mock_url, data_dir, code, event_tx.clone()).await;
+        let res = provision_by_code(&mock_url, data_dir, code, Some(event_tx.clone())).await;
         assert!(res.is_ok());
         assert!(res.unwrap());
         r_th.await.unwrap();
@@ -1547,7 +1556,7 @@ mod tests {
                 .expect_remove_dir_all()
                 .with(contains(".mecha_test/db"))
                 .returning(|_| Ok(()));
-            let res = de_provision(&data_dir, mock_fs, event_tx.clone());
+            let res = de_provision(&data_dir, mock_fs, Some(event_tx.clone()));
             println!("res: {:?}", res);
             assert!(res.is_ok());
             assert!(res.unwrap());

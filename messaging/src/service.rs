@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use agent_settings::read_settings_yml;
-use agent_settings::{messaging::MessagingSettings, AgentSettings};
 use anyhow::{bail, Result};
 use channel::recv_with_timeout;
 use crypto::base64::b64_encode;
@@ -14,7 +12,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha256::digest;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::errors::{MessagingError, MessagingErrorCodes};
 const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
@@ -71,111 +69,117 @@ pub struct AuthNonceRequest {
     pub agent_name: String,
     pub agent_version: String,
 }
-#[derive(Clone)]
-pub struct Messaging {
-    settings: AgentSettings,
-    nats_client: Option<NatsClient>,
+#[derive(Debug, Clone)]
+pub struct ConnectOptions {
+    pub machine_id: Option<String>,
+    pub event_tx: Option<broadcast::Sender<Event>>,
+    pub event_type: Option<events::MessagingEvent>,
+    pub private_key_path: String,
+    pub service_url: String,
+    pub get_nonce_url: String,
+    pub issue_auth_token_url: String,
 }
-impl Messaging {
-    pub fn new(initialize_client: bool) -> Self {
-        let settings = match read_settings_yml() {
-            Ok(settings) => settings,
-            Err(_) => AgentSettings::default(),
-        };
-        let nats_url = settings.messaging.system.url.clone();
-        let nats_client = match initialize_client {
-            true => Some(NatsClient::new(&nats_url)),
-            false => None,
-        };
-        Self {
-            settings,
-            nats_client,
-        }
+/// Create a new NATS client with the given URL
+///
+/// # Arguments
+///
+/// * `nats_url`: The URL of the NATS server
+///
+/// # Returns
+///
+/// * `Option<NatsClient>`: The newly created NATS client or None in case of an error
+pub fn new(nats_url: String) -> Option<NatsClient> {
+    let nats_client = Some(NatsClient::new(&nats_url));
+    {
+        nats_client
     }
-    /**
-     * The Messaging Service connection will perform the following
-     * 1. Authenticate
-     * 2. Create NATs Client
-     * 3. Connect NATs client with token
-     * 4. Check for connection event, re-connect if necessary
-     */
-    pub async fn connect(
-        &mut self,
-        identity_tx: &mpsc::Sender<IdentityMessage>,
-        event_tx: broadcast::Sender<Event>,
-        event_type: events::MessagingEvent,
-    ) -> Result<bool> {
-        let fn_name = "connect";
-        if self.nats_client.is_none() {
+}
+/**
+ * The Messaging Service connection will perform the following
+ * 1. Authenticate
+ * 2. Create NATs Client
+ * 3. Connect NATs client with token
+ * 4. Check for connection event, re-connect if necessary
+ */
+pub async fn connect(
+    mut nats_client: Option<NatsClient>,
+    nats_connect_options: &ConnectOptions,
+) -> Result<NatsClient> {
+    let fn_name = "connect";
+    let machine_id = nats_connect_options.machine_id.clone();
+    if nats_client.is_none() {
+        error!(
+            func = fn_name,
+            package = PACKAGE_NAME,
+            "messaging service initialized without nats client"
+        );
+        bail!(MessagingError::new(
+            MessagingErrorCodes::NatsClientNotInitialized,
+            format!("messaging service initialized without nats client"),
+        ))
+    }
+
+    debug!(
+        func = fn_name,
+        package = PACKAGE_NAME,
+        "machine id - {:?}",
+        machine_id
+    );
+    let auth_token = match authenticate(
+        &machine_id.clone().unwrap(),
+        &nats_client.as_ref().unwrap().user_public_key,
+        &nats_connect_options.private_key_path,
+        &nats_connect_options.service_url.clone(),
+        nats_connect_options.get_nonce_url.clone(),
+        nats_connect_options.issue_auth_token_url.clone(),
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
             error!(
                 func = fn_name,
                 package = PACKAGE_NAME,
-                "messaging service initialized without nats client"
+                "error authenticating - {}",
+                e
             );
-            bail!(MessagingError::new(
-                MessagingErrorCodes::NatsClientNotInitialized,
-                format!("messaging service initialized without nats client"),
-            ))
+            bail!(e)
         }
-
-        let machine_id = match get_machine_id(identity_tx.clone()).await {
-            Ok(id) => id,
-            Err(e) => {
-                error!(
-                    func = fn_name,
-                    package = PACKAGE_NAME,
-                    "error getting machine id - {}",
-                    e
-                );
-                bail!(e)
-            }
-        };
-
-        debug!(
-            func = fn_name,
-            package = PACKAGE_NAME,
-            "machine id - {}",
-            machine_id
-        );
-        let auth_token = match authenticate(
-            &self.settings,
-            &machine_id,
-            &self.nats_client.as_ref().unwrap().user_public_key,
+    };
+    let inbox_prefix = format!("inbox.{}", digest(machine_id.unwrap()));
+    match nats_client
+        .as_mut()
+        .unwrap()
+        .connect(
+            &auth_token,
+            &inbox_prefix,
+            nats_connect_options.event_tx.clone(),
         )
         .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                error!(
-                    func = fn_name,
-                    package = PACKAGE_NAME,
-                    "error authenticating - {}",
-                    e
-                );
-                bail!(e)
-            }
-        };
-        let inbox_prefix = format!("inbox.{}", digest(&machine_id));
-        match self
-            .nats_client
-            .as_mut()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            error!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "error connecting to nats - {}",
+                e
+            );
+            bail!(e)
+        }
+    };
+    // Send broadcast message as messaging service is connected
+    if nats_connect_options.event_tx.is_some() {
+        match nats_connect_options
+            .event_tx
+            .clone()
             .unwrap()
-            .connect(&auth_token, &inbox_prefix, event_tx.clone())
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                error!(
-                    func = fn_name,
-                    package = PACKAGE_NAME,
-                    "error connecting to nats - {}",
-                    e
-                );
-                bail!(e)
-            }
-        };
-        // Send broadcast message as messaging service is connected
-        match event_tx.send(Event::Messaging(event_type)) {
+            .send(Event::Messaging(
+                nats_connect_options
+                    .event_type
+                    .clone()
+                    .unwrap_or(events::MessagingEvent::Connected),
+            )) {
             Ok(_) => {}
             Err(e) => {
                 error!(
@@ -190,158 +194,158 @@ impl Messaging {
                 ));
             }
         }
-        info!(
-            func = fn_name,
-            package = PACKAGE_NAME,
-            "messaging service connected"
-        );
-        Ok(true)
     }
-    pub async fn publish(
-        &self,
-        subject: &str,
-        headers: Option<HashMap<String, String>>,
-        data: Bytes,
-    ) -> Result<bool> {
-        let fn_name = "publish";
-        debug!(
+    info!(
+        func = fn_name,
+        package = PACKAGE_NAME,
+        "messaging service connected"
+    );
+    Ok(nats_client.unwrap())
+}
+pub async fn publish(
+    nats_client: Option<NatsClient>,
+    subject: &str,
+    headers: Option<HashMap<String, String>>,
+    data: Bytes,
+) -> Result<bool> {
+    let fn_name = "publish";
+    debug!(
+        func = fn_name,
+        package = PACKAGE_NAME,
+        "subject - {}",
+        subject
+    );
+    if nats_client.is_none() {
+        error!(
             func = fn_name,
             package = PACKAGE_NAME,
-            "subject - {}",
-            subject
+            "messaging service initialized without nats client"
         );
-        if self.nats_client.is_none() {
+        bail!(MessagingError::new(
+            MessagingErrorCodes::NatsClientNotInitialized,
+            format!("messaging service initialized without nats client"),
+        ))
+    }
+
+    let nats_client = nats_client.as_ref().unwrap();
+    let is_published = match nats_client.publish(subject, headers, data).await {
+        Ok(s) => s,
+        Err(e) => {
             error!(
                 func = fn_name,
                 package = PACKAGE_NAME,
-                "messaging service initialized without nats client"
+                "error publishing message - {}",
+                e
             );
-            bail!(MessagingError::new(
-                MessagingErrorCodes::NatsClientNotInitialized,
-                format!("messaging service initialized without nats client"),
-            ))
+            bail!(e)
         }
+    };
+    Ok(is_published)
+}
 
-        let nats_client = self.nats_client.as_ref().unwrap();
-        let is_published = match nats_client.publish(subject, headers, data).await {
-            Ok(s) => s,
-            Err(e) => {
-                error!(
-                    func = fn_name,
-                    package = PACKAGE_NAME,
-                    "error publishing message - {}",
-                    e
-                );
-                bail!(e)
-            }
-        };
-        Ok(is_published)
-    }
+pub async fn subscribe(nats_client: Option<NatsClient>, subject: &str) -> Result<Subscriber> {
+    debug!(
+        func = "subscribe",
+        package = PACKAGE_NAME,
+        "subject - {}",
+        subject
+    );
 
-    pub async fn subscribe(&self, subject: &str) -> Result<Subscriber> {
-        debug!(
+    if nats_client.is_none() {
+        error!(
             func = "subscribe",
             package = PACKAGE_NAME,
-            "subject - {}",
-            subject
+            "messaging service initialized without nats client"
         );
+        bail!(MessagingError::new(
+            MessagingErrorCodes::NatsClientNotInitialized,
+            format!("messaging service initialized without nats client"),
+        ))
+    }
 
-        if self.nats_client.is_none() {
+    let nats_client = nats_client.as_ref().unwrap();
+    let subscriber = match nats_client.subscribe(subject).await {
+        Ok(s) => s,
+        Err(e) => {
             error!(
                 func = "subscribe",
                 package = PACKAGE_NAME,
-                "messaging service initialized without nats client"
+                "error subscribing to subject - {}",
+                e
             );
-            bail!(MessagingError::new(
-                MessagingErrorCodes::NatsClientNotInitialized,
-                format!("messaging service initialized without nats client"),
-            ))
+            bail!(e)
         }
-
-        let nats_client = self.nats_client.as_ref().unwrap();
-        let subscriber = match nats_client.subscribe(subject).await {
-            Ok(s) => s,
-            Err(e) => {
-                error!(
-                    func = "subscribe",
-                    package = PACKAGE_NAME,
-                    "error subscribing to subject - {}",
-                    e
-                );
-                bail!(e)
-            }
-        };
-        info!(
-            fn_name = "subscribe",
+    };
+    info!(
+        fn_name = "subscribe",
+        package = PACKAGE_NAME,
+        "subscribed to subject - {}",
+        subject
+    );
+    Ok(subscriber)
+}
+pub async fn init_jetstream(nats_client: Option<NatsClient>) -> Result<JetStreamClient> {
+    if nats_client.is_none() {
+        error!(
+            func = "init_jetstream",
             package = PACKAGE_NAME,
-            "subscribed to subject - {}",
-            subject
+            "messaging service initialized without nats client"
         );
-        Ok(subscriber)
+        bail!(MessagingError::new(
+            MessagingErrorCodes::NatsClientNotInitialized,
+            format!("messaging service initialized without nats client"),
+        ))
     }
-    pub async fn init_jetstream(&self) -> Result<JetStreamClient> {
-        if self.nats_client.is_none() {
-            error!(
-                func = "init_jetstream",
-                package = PACKAGE_NAME,
-                "messaging service initialized without nats client"
-            );
-            bail!(MessagingError::new(
-                MessagingErrorCodes::NatsClientNotInitialized,
-                format!("messaging service initialized without nats client"),
-            ))
-        }
-        let nats_client = self.nats_client.as_ref().unwrap();
-        let js_client = JetStreamClient::new(nats_client.client.clone().unwrap());
-        info!(
-            fn_name = "init_jetstream",
-            package = PACKAGE_NAME,
-            "initialized jetstream client"
-        );
-        Ok(js_client)
-    }
+    let nats_client = nats_client.as_ref().unwrap();
+    let js_client = JetStreamClient::new(nats_client.client.clone().unwrap());
+    info!(
+        fn_name = "init_jetstream",
+        package = PACKAGE_NAME,
+        "initialized jetstream client"
+    );
+    Ok(js_client)
+}
 
-    pub async fn request(&self, subject: &str, data: Bytes) -> Result<Bytes> {
-        debug!(
+pub async fn request(nats_client: Option<NatsClient>, subject: &str, data: Bytes) -> Result<Bytes> {
+    debug!(
+        func = "request",
+        package = PACKAGE_NAME,
+        "subject - {}",
+        subject
+    );
+
+    if nats_client.is_none() {
+        error!(
             func = "request",
             package = PACKAGE_NAME,
-            "subject - {}",
-            subject
+            "messaging service initialized without nats client"
         );
+        bail!(MessagingError::new(
+            MessagingErrorCodes::NatsClientNotInitialized,
+            format!("messaging service initialized without nats client"),
+        ))
+    }
 
-        if self.nats_client.is_none() {
+    let nats_client = nats_client.as_ref().unwrap();
+    let response = match nats_client.request(subject, data).await {
+        Ok(s) => s,
+        Err(e) => {
             error!(
                 func = "request",
                 package = PACKAGE_NAME,
-                "messaging service initialized without nats client"
+                "error requesting message - {}",
+                e
             );
-            bail!(MessagingError::new(
-                MessagingErrorCodes::NatsClientNotInitialized,
-                format!("messaging service initialized without nats client"),
-            ))
+            bail!(e)
         }
-
-        let nats_client = self.nats_client.as_ref().unwrap();
-        let response = match nats_client.request(subject, data).await {
-            Ok(s) => s,
-            Err(e) => {
-                error!(
-                    func = "request",
-                    package = PACKAGE_NAME,
-                    "error requesting message - {}",
-                    e
-                );
-                bail!(e)
-            }
-        };
-        info!(
-            fn_name = "request",
-            package = PACKAGE_NAME,
-            "requested subject - {}",
-            subject
-        );
-        Ok(response)
-    }
+    };
+    info!(
+        fn_name = "request",
+        package = PACKAGE_NAME,
+        "requested subject - {}",
+        subject
+    );
+    Ok(response)
 }
 /**
  * Performs messaging authentication and returns the JWT. Auth procedure is
@@ -350,13 +354,16 @@ impl Messaging {
  * 3. Requests the token from the server
  */
 pub async fn authenticate(
-    settings: &AgentSettings,
     machine_id: &String,
     nats_client_public_key: &String,
+    private_key_path: &String,
+    service_url: &String,
+    get_nonce_url: String,
+    issue_auth_token_url: String,
 ) -> Result<String> {
     let fn_name = "authenticate";
     // Step 2: Get Nonce from Server
-    let nonce = match get_auth_nonce(&settings.messaging).await {
+    let nonce = match get_auth_nonce(service_url.clone(), get_nonce_url).await {
         Ok(n) => n,
         Err(e) => {
             error!(
@@ -370,7 +377,7 @@ pub async fn authenticate(
     };
     debug!(func = fn_name, package = PACKAGE_NAME, "nonce - {}", nonce);
     // Step 3: Sign the nonce
-    let signed_nonce = match sign_nonce(&settings.provisioning.paths.machine.private_key, &nonce) {
+    let signed_nonce = match sign_nonce(&private_key_path, &nonce) {
         Ok(n) => n,
         Err(e) => {
             error!(
@@ -389,7 +396,8 @@ pub async fn authenticate(
         &nonce,
         &signed_nonce,
         &nats_client_public_key,
-        &settings.messaging,
+        service_url,
+        issue_auth_token_url,
     )
     .await
     {
@@ -437,13 +445,9 @@ fn sign_nonce(private_key_path: &String, nonce: &str) -> Result<String> {
     Ok(encoded_signed_nonce)
 }
 
-async fn get_auth_nonce(settings: &MessagingSettings) -> Result<String> {
+async fn get_auth_nonce(service_url: String, get_nonce_url: String) -> Result<String> {
     let fn_name = "get_auth_nonce";
-    let url = format!(
-        "{}{}",
-        &settings.service_urls.base_url, &settings.service_urls.get_nonce
-    );
-
+    let url = format!("{}{}", &service_url, &get_nonce_url);
     debug!(func = fn_name, package = PACKAGE_NAME, "url - {}", url);
     // Construct request body
     let request_body: AuthNonceRequest = AuthNonceRequest {
@@ -558,7 +562,8 @@ async fn get_auth_token(
     nonce: &str,
     signed_nonce: &str,
     nats_user_public_key: &str,
-    settings: &MessagingSettings,
+    service_url: &String,
+    issue_auth_token_url: String,
 ) -> Result<String> {
     let fn_name = "get_auth_token";
     let request_body = GetAuthTokenRequest {
@@ -571,10 +576,7 @@ async fn get_auth_token(
     };
 
     // Format the url to get the auth token
-    let url = format!(
-        "{}{}",
-        &settings.service_urls.base_url, &settings.service_urls.issue_auth_token
-    );
+    let url = format!("{}{}", &service_url, &issue_auth_token_url);
     debug!(
         func = fn_name,
         package = PACKAGE_NAME,
@@ -685,7 +687,10 @@ async fn get_auth_token(
     Ok(auth_token.payload)
 }
 
-pub async fn get_machine_id(identity_tx: mpsc::Sender<IdentityMessage>) -> Result<String> {
+pub async fn get_machine_id(
+    identity_tx: mpsc::Sender<IdentityMessage>,
+    is_silent: bool,
+) -> Result<String> {
     let (tx, rx) = oneshot::channel();
     match identity_tx
         .clone()
@@ -694,12 +699,14 @@ pub async fn get_machine_id(identity_tx: mpsc::Sender<IdentityMessage>) -> Resul
     {
         Ok(_) => {}
         Err(e) => {
-            error!(
-                func = "get_machine_id",
-                package = PACKAGE_NAME,
-                "error sending get machine id message - {}",
-                e
-            );
+            if !is_silent {
+                error!(
+                    func = "get_machine_id",
+                    package = PACKAGE_NAME,
+                    "error sending get machine id message - {}",
+                    e
+                );
+            }
             bail!(MessagingError::new(
                 MessagingErrorCodes::ChannelSendMessageError,
                 format!("error sending get machine id message - {}", e),
@@ -709,12 +716,14 @@ pub async fn get_machine_id(identity_tx: mpsc::Sender<IdentityMessage>) -> Resul
     let machine_id = match recv_with_timeout(rx).await {
         Ok(id) => id,
         Err(e) => {
-            error!(
-                func = "get_machine_id",
-                package = PACKAGE_NAME,
-                "error receiving get machine id message - {}",
-                e
-            );
+            if !is_silent {
+                error!(
+                    func = "get_machine_id",
+                    package = PACKAGE_NAME,
+                    "error receiving get machine id message - {}",
+                    e
+                );
+            }
             bail!(MessagingError::new(
                 MessagingErrorCodes::ChannelReceiveMessageError,
                 format!("error receiving get machine id message - {}", e),

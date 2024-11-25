@@ -161,12 +161,12 @@ impl ProvisioningHandler {
                             let _ = reply_to.send(code);
                         }
                         ProvisioningMessage::ProvisionByCode { code, reply_to } => {
-                            let status = provision_by_code(&self.settings.service_url, &self.settings.data_dir, &code, self.event_tx.clone()).await;
+                            let status = provision_by_code(&self.settings.service_url, &self.settings.data_dir, &code, Some(self.event_tx.clone())).await;
                             let _ = reply_to.send(status);
                         }
                         ProvisioningMessage::Deprovision { reply_to } => {
                             let real_fs = RealFileSystem;
-                            let status = de_provision(&self.settings.data_dir, real_fs, self.event_tx.clone());
+                            let status = de_provision(&self.settings.data_dir, real_fs, Some(self.event_tx.clone()));
                             let _ = reply_to.send(status);
                         }
                     };

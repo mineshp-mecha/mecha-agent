@@ -1,24 +1,20 @@
-use std::env;
-
-use agent_settings::{read_settings_yml, AgentSettings};
 use anyhow::{bail, Result};
 use channel::recv_with_timeout;
-use chrono::Duration;
 use identity::handler::IdentityMessage;
 use messaging::handler::MessagingMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha256::digest;
+use std::env;
 use sys_info::hostname;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 const PACKAGE_NAME: &str = env!("CARGO_CRATE_NAME");
 use crate::errors::{StatusError, StatusErrorCodes};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatusPublishPayload {
     pub time: String,
     pub machine_id: String,
-    pub sys_uptime: String,
     pub sys_load_avg: String,
 }
 
@@ -40,32 +36,11 @@ pub struct PlatformInfo {
     pub agent_version: String,
     pub agent_name: String,
 }
-pub fn get_time_interval() -> u64 {
-    let settings = match read_settings_yml() {
-        Ok(settings) => settings,
-        Err(err) => {
-            warn!(
-                func = "get_time_interval",
-                package = PACKAGE_NAME,
-                "failed to get machine id: {:?}",
-                err
-            );
-            AgentSettings::default()
-        }
-    };
-    debug!(
-        func = "get_time_interval",
-        package = PACKAGE_NAME,
-        "time_interval_sec: {}",
-        settings.status.time_interval_sec
-    );
-    settings.status.time_interval_sec
-}
 pub async fn send_status(status_options: SendStatusOptions) -> Result<bool> {
     let fn_name = "send_status";
     // Get machine id
     let (publish_result_tx, publish_result_rx) = tokio::sync::oneshot::channel();
-    let machine_id = match get_machine_id(status_options.identity_tx.clone()).await {
+    let machine_id = match get_machine_id(status_options.identity_tx).await {
         Ok(machine_id) => {
             debug!(
                 func = fn_name,
@@ -98,17 +73,7 @@ pub async fn send_status(status_options: SendStatusOptions) -> Result<bool> {
         "formatted utc time - {}",
         formatted_utc_time
     );
-    let uptime = match uptime_lib::get() {
-        Ok(uptime) => uptime,
-        Err(err) => {
-            bail!(StatusError::new(
-                StatusErrorCodes::FetchUptimeError,
-                format!("error getting uptime - {}", err),
-            ));
-        }
-    };
-    //calculate duration
-    let system_uptime_duration = Duration::seconds(uptime.as_secs_f64() as i64);
+
     let load_avg = match sys_info::loadavg() {
         Ok(load_avg) => format!(
             "1m:{} 5m:{} 15m:{}",
@@ -131,7 +96,6 @@ pub async fn send_status(status_options: SendStatusOptions) -> Result<bool> {
     let publish_payload = StatusPublishPayload {
         time: formatted_utc_time,
         machine_id: machine_id.clone(),
-        sys_uptime: system_uptime_duration.num_seconds().to_string(),
         sys_load_avg: load_avg,
     };
     debug!(
@@ -146,7 +110,7 @@ pub async fn send_status(status_options: SendStatusOptions) -> Result<bool> {
         .send(MessagingMessage::Send {
             reply_to: publish_result_tx,
             message: json!(publish_payload).to_string(),
-            subject: format!("machine.{}.status.heartbeat", digest(machine_id.clone())),
+            subject: format!("machine.{}.status.heartbeat", digest(machine_id)),
             headers: None,
         })
         .await;
@@ -274,7 +238,7 @@ pub async fn machine_platform_info(
         .send(MessagingMessage::Send {
             reply_to: tx,
             message: json!(platform_info).to_string(),
-            subject: format!("machine.{}.status.info", digest(machine_id.clone())),
+            subject: format!("machine.{}.status.info", digest(machine_id)),
             headers: None,
         })
         .await

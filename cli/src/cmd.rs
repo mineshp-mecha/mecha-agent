@@ -1,9 +1,9 @@
-use std::{io, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
-use clap::{command, Args, Parser, Subcommand};
-use identity::service::{get_machine_details, get_machine_id};
-use provisioning::service::{de_provision, generate_code, provision_by_code};
+use clap::{command, Args};
+use identity::service::get_machine_details;
+use provisioning::service::{de_provision, generate_code, provision_by_code, RealFileSystem};
 use settings::service::get_settings_by_key;
 use tokio::time::{self, Instant};
 
@@ -35,11 +35,13 @@ impl Setup {
             interval_total_duration,
         );
 
+        let service_url = String::from("http://localhost:8000");
+        let data_dir = String::from("~/.mecha_test");
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     println!("Waiting for provisioning ...: TICK DURATION");
-                    match provision_by_code(code.clone(), None).await {
+                    match provision_by_code(&service_url,&data_dir, &code, None).await {
                         Ok(_) => {
                             println!("Provisioning successful ...: PROVISIONING SUCCESSFUL");
                             break;
@@ -70,8 +72,10 @@ pub struct Whoami {
 
 impl Whoami {
     pub async fn run(&self) -> Result<()> {
+        let data_dir = "~/.mecha"; //TODO: get from settings
+
         //TODO: figure how to print machine details on terminal
-        let machine_details = match get_machine_details() {
+        let machine_details = match get_machine_details(data_dir) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -127,9 +131,11 @@ impl Reset {
         stdin()
             .read_line(&mut s)
             .expect("Did not enter a correct string");
+
+        let real_fs = RealFileSystem;
         match s.trim().to_lowercase().as_str() {
             "y" | "yes" => {
-                match de_provision(None) {
+                match de_provision("~/.mecha", real_fs, None) {
                     Ok(_) => {
                         println!("De-provisioning successful ...: DE-PROVISIONING SUCCESSFUL");
                     }

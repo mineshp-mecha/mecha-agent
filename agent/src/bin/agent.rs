@@ -1,9 +1,11 @@
 use agent_settings::{read_settings_yml, AgentSettings};
 use anyhow::{bail, Result};
+use clap::Parser;
 use init_tracing_opentelemetry::tracing_subscriber_ext::{
     build_logger_text, build_loglevel_filter_layer, build_otel_layer,
 };
 
+use cli::cmd::{Reset, Setup, Whoami};
 use mecha_agent::init::init_handlers;
 use opentelemetry::global;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -41,27 +43,15 @@ struct Mectl {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setting tracing
-    let settings = match read_settings_yml() {
-        Ok(settings) => settings,
-        Err(e) => {
-            tracing::error!(
-                func = "main",
-                package = PACKAGE_NAME,
-                "error reading settings.yml: {}",
-                e
-            );
-            AgentSettings::default()
-        }
-    };
-
     let mectl = Mectl::parse();
     match mectl.command {
         MectlCommand::Setup(configure) => {
             let _ = configure.run().await;
         }
         MectlCommand::Start(start) => {
+            println!("Starting agent ... {:?}", start.settings);
             // configure the global logger to use our opentelemetry logger
-            let _ = start_agent(start.init_grpc).await;
+            let _ = start_agent(start.settings, start.init_grpc).await;
         }
         MectlCommand::Whoami(whoami) => {
             let _ = whoami.run().await;
@@ -76,7 +66,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn start_agent(init_grpc: bool) -> Result<()> {
+async fn start_agent(settings_path: String, init_grpc: bool) -> Result<()> {
+    let settings = read_settings_yml(Some(settings_path)).unwrap();
     // configure the global logger to use our opentelemetry logger
     let _ = init_logs_config();
     let logger_provider = opentelemetry::global::logger_provider();
@@ -99,6 +90,6 @@ async fn start_agent(init_grpc: bool) -> Result<()> {
         result = "success",
         "tracing set up",
     );
-    let _ = init_handlers(settings).await;
+    let _ = init_handlers(settings, init_grpc).await;
     Ok(())
 }

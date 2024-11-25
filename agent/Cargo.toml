@@ -12,6 +12,7 @@ name = "mecha-agent"
 path = "src/bin/agent.rs"
 
 [dependencies]
+cli = { path = "../cli" }
 events = { path = "../core/events" }
 agent-settings = { path = "../core/settings" }
 app-services = { path = "../app-services" }
