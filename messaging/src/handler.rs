@@ -206,6 +206,20 @@ impl MessagingHandler {
                             });
                             let _ = connect(self.messaging_client.clone(), &connect_options.unwrap()).await;
                         },
+                        Event::Nats(nats_client::NatsEvent::Connected) => {
+                            //This will help in re-connecting all the services
+                            match self.event_tx.send(Event::Messaging(events::MessagingEvent::Connected)) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!(
+                                        func = "run",
+                                        package = PACKAGE_NAME,
+                                        "error sending messaging service connected event - {}",
+                                        e
+                                    );
+                                }
+                            }
+                        },
                         Event::Nats(nats_client::NatsEvent::ServerError(err)) => {
                             error!(
                                 func = "run",
