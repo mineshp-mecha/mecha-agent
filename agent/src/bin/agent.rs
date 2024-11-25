@@ -48,7 +48,10 @@ async fn main() -> Result<()> {
     let mectl = Mectl::parse();
     match mectl.command {
         MectlCommand::Setup(configure) => {
-            let _ = configure.run().await;
+            let settings = read_settings_yml(None).unwrap();
+            let _ = configure
+                .run(&settings.data.dir, &settings.backend.service)
+                .await;
         }
         MectlCommand::Start(start) => {
             println!("Starting agent ... {:?}", start.settings);

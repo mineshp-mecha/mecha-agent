@@ -16,7 +16,7 @@ pub struct Setup {
 }
 
 impl Setup {
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(&self, data_dir: &str, service_url: &str) -> Result<()> {
         // Check if 'configure' is the only command provided
         let code = match generate_code() {
             Ok(code) => code,
@@ -34,9 +34,6 @@ impl Setup {
             Instant::now() + interval_total_duration,
             interval_total_duration,
         );
-
-        let service_url = String::from("http://localhost:8000");
-        let data_dir = String::from("~/.mecha_test");
         loop {
             tokio::select! {
                 _ = interval.tick() => {
@@ -97,8 +94,10 @@ impl Whoami {
                 return Err(e);
             }
         };
-        println!("Machine Name: {:?}", machine_name);
-        println!("Machine Alias: {:?}", machine_alias);
+        println!(
+            "Id: {:?} \nName: {:?} \nAlias: {:?}, \nCertificate Serial Number: {:?} \nCertificate Fingerprint: {:?}",
+            machine_details.machine_id, machine_name, machine_alias, machine_details.certificate_serial_number, machine_details.certificate_fingerprint
+        );
         Ok(())
     }
 }
