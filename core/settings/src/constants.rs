@@ -10,6 +10,6 @@ pub const CERT_SIGN_URL_QUERY_PATH: &str = "/v1/provisioning/cert/sign";
 pub const NONCE_URL_QUERY_PATH: &str = "/v1/messaging/get_nonce";
 pub const ISSUE_TOKEN_URL_QUERY_PATH: &str = "/v1/messaging/issue_token";
 
-pub const DB_PATH: &str = "/db";
+pub const DB_PATH: &str = "/agent/db";
 
 pub const RSA_KEY_SIZE: usize = 2048;

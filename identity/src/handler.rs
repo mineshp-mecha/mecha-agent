@@ -2,12 +2,10 @@ use crate::service::{get_machine_cert, get_machine_id, get_provision_status};
 use anyhow::Result;
 use crypto::MachineCert;
 use events::Event;
-use services::{ServiceHandler, ServiceStatus};
 use tokio::{
     select,
     sync::{broadcast, mpsc, oneshot},
 };
-use tonic::async_trait;
 use tracing::info;
 
 pub struct Settings {
@@ -15,8 +13,6 @@ pub struct Settings {
 }
 pub struct IdentityHandler {
     pub settings: Settings,
-    event_tx: broadcast::Sender<Event>,
-    status: ServiceStatus,
 }
 pub struct IdentityOptions {
     pub settings: Settings,
@@ -39,8 +35,6 @@ impl IdentityHandler {
     pub fn new(options: IdentityOptions) -> Self {
         Self {
             settings: options.settings,
-            event_tx: options.event_tx,
-            status: ServiceStatus::INACTIVE,
         }
     }
     pub async fn run(&mut self, mut message_rx: mpsc::Receiver<IdentityMessage>) -> Result<()> {

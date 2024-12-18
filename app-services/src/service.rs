@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Read, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use agent_settings::AgentSettings;
 use anyhow::{bail, Result};
@@ -12,18 +12,15 @@ use hyper::{
 };
 use messaging::{async_nats::HeaderMap, handler::MessagingMessage};
 use messaging::{async_nats::Message, Subscriber as NatsSubscriber};
-use nats_client::{Bytes, NatsClient};
+use nats_client::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::{
-    sync::{
-        mpsc::{self, Sender},
-        oneshot, Mutex,
-    },
-    time::{interval, Instant},
+use tokio::sync::{
+    mpsc::{self, Sender},
+    oneshot, Mutex,
 };
 use tokio_util::bytes::{BufMut, BytesMut};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     errors::{AppServicesError, AppServicesErrorCodes},
@@ -75,10 +72,8 @@ pub struct ResponseType {
     pub body: HyperBodyBytes,
 }
 
-type ReqTx = mpsc::Sender<String>;
 #[derive()]
 struct RequestState {
-    tx: ReqTx,
     uri: String,
     req_headers: HashMap<String, String>,
     req_method: String,
@@ -211,7 +206,7 @@ pub async fn await_app_service_message(
 }
 
 async fn process_message(
-    dns_name: String,
+    _dns_name: String,
     local_port: u16,
     message: Message,
     messaging_tx: Sender<MessagingMessage>,
@@ -273,9 +268,7 @@ async fn process_message(
             content_length
         );
         let mut map = req_map_clone.lock().await;
-        let (tx, rx) = mpsc::channel(10);
         let request_state = RequestState {
-            tx: tx,
             uri: http_incoming_request.uri.clone(),
             req_headers: http_incoming_request.headers.clone(),
             req_method: http_incoming_request.method.clone(),
@@ -373,7 +366,7 @@ async fn process_message(
                                 body: HyperBodyBytes::from("error connecting to remote host"),
                             },
                         },
-                        Err(e) => ResponseType {
+                        Err(_e) => ResponseType {
                             headers: std::collections::HashMap::new(),
                             body: HyperBodyBytes::from("internal server error"),
                         },
@@ -699,7 +692,7 @@ pub async fn reconnect_messaging_service(
     messaging_tx: Sender<MessagingMessage>,
     new_setting: String,
     existing_settings: HashMap<String, String>,
-) -> Result<Option<NatsClient>> {
+) -> Result<bool> {
     let fn_name = "reconnect_messaging_service";
     match existing_settings.get("app_services.{app_id}.dns_name") {
         Some(setting) => {
@@ -709,7 +702,7 @@ pub async fn reconnect_messaging_service(
                     package = PACKAGE_NAME,
                     "networking settings are same, no need to reconnect"
                 );
-                return Ok(None);
+                return Ok(false);
             }
         }
         None => {
@@ -739,7 +732,7 @@ pub async fn reconnect_messaging_service(
             ));
         }
     }
-    let result = match recv_with_timeout(rx).await {
+    let _result = match recv_with_timeout(rx).await {
         Ok(res) => res,
         Err(e) => {
             error!(
@@ -759,7 +752,7 @@ pub async fn reconnect_messaging_service(
         package = PACKAGE_NAME,
         "reconnect request completed",
     );
-    Ok(Some(result))
+    Ok(true)
 }
 
 pub fn parse_settings_payload(payload: String) -> Result<AppServiceSettings> {

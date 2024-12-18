@@ -26,7 +26,7 @@ pub struct MachineCert {
     pub root_cert: String,
 }
 pub fn get_machine_id(public_key_path: &str) -> Result<String> {
-    let public_key_cert = match read_public_key(&public_key_path) {
+    let public_key_cert = match x509::read_public_key(&public_key_path) {
         Ok(v) => v,
         Err(e) => {
             error!(

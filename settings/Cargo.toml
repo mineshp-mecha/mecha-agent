@@ -30,3 +30,4 @@ tokio = { workspace = true }
 futures = { workspace = true }
 sha256 = { workspace = true }
 tokio-util = { workspace = true }
+fs = { path = "../commons/fs" }

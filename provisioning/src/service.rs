@@ -618,59 +618,6 @@ pub fn de_provision<F: FileSystem>(
             }
         }
     }
-
-    //TODO: Move this to settings service on deprovision event
-    let storage_path = data_dir.to_owned() + constants::DB_PATH;
-    let db_path = match construct_dir_path(&storage_path) {
-        Ok(path) => {
-            debug!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "db path constructed {:?}",
-                path.display()
-            );
-            path
-        }
-        Err(e) => {
-            error!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "error constructing db path - {}",
-                e
-            );
-            bail!(ProvisioningError::new(
-                ProvisioningErrorCodes::SettingsDatabaseDeleteError,
-                format!("error constructing db path - {}", e),
-            ))
-        }
-    };
-
-    //TODO: Move this to settings service on deprovision event
-    //3. Delete db
-    match fs.remove_dir_all(&db_path.to_str().unwrap()) {
-        Ok(_) => {
-            debug!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "db deleted successfully from path - {:?}",
-                &db_path
-            )
-        }
-        Err(e) => {
-            error!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                "error deleting db, from path {:?}, error - {}",
-                &db_path,
-                e
-            );
-            bail!(ProvisioningError::new(
-                ProvisioningErrorCodes::SettingsDatabaseDeleteError,
-                format!("error deleting db, code: {}, error - {}", 1001, e),
-            ));
-        }
-    }
-
     info!(
         func = fn_name,
         package = PACKAGE_NAME,
