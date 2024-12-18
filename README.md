@@ -100,6 +100,6 @@ Certificate Fingerprint: ___
 ### Reset
 ```bash
 $ mecha-agent reset
-> Are you sure you want to reset the agent (Name: mars-machine) [y/N] - ?
+> Are you sure you want to reset the agent (Name: mars-machine) [Y/N] - ?
 > Agent reset successful
 ```
