@@ -48,3 +48,58 @@ $ docker build -t mecha-org/mecha-agent .
 ```sh
 $ docker run -p 3001:3001 mecha-org/mecha-agent
 ```
+
+## Commands
+
+### Start
+
+Starts the agent, but only if it is provisioned.
+
+```bash
+# If machine found
+$ mecha-agent start -s ./settings.yml
+> Starting Mecha agent
+> Machine Name: mars-machine
+> Machine ID: ___
+> Mecha agent started successful 
+```
+
+
+#### Options
+    -s ./settings.yml: Specifies the path to the settings file.
+    --server: Enables GRPC server mode.
+#### Notes
+    GRPC: By default, GRPC does not start unless --server is used.
+    Server Mode: If the --server flag is added, GRPC will be enabled.
+
+### Setup
+Runs a provisioning flow via CLI.
+```bash
+$ mecha-agent setup
+> Generating code ... > XYZ-123
+> Waiting for provisioning ...
+> Machine Name: mars-machine
+> Machine ID: _____
+> Machine setup complete
+```
+
+
+### Whoami
+
+```bash
+$ mecha-agent whoami
+> Machine details fetched
+ID: ___
+Name: ___
+Alias: ___
+Certificate Serial Number: ___
+Certificate Fingerprint: ___
+
+```
+
+### Reset
+```bash
+$ mecha-agent reset
+> Are you sure you want to reset the agent (Name: mars-machine) [y/N] - ?
+> Agent reset successful
+```
