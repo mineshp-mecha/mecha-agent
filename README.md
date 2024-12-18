@@ -56,12 +56,7 @@ $ docker run -p 3001:3001 mecha-org/mecha-agent
 Starts the agent, but only if it is provisioned.
 
 ```bash
-# If machine found
 $ mecha-agent start -s ./settings.yml
-> Starting Mecha agent
-> Machine Name: mars-machine
-> Machine ID: ___
-> Mecha agent started successful 
 ```
 
 
@@ -76,11 +71,6 @@ $ mecha-agent start -s ./settings.yml
 Runs a provisioning flow via CLI.
 ```bash
 $ mecha-agent setup
-> Generating code ... > XYZ-123
-> Waiting for provisioning ...
-> Machine Name: mars-machine
-> Machine ID: _____
-> Machine setup complete
 ```
 
 
@@ -88,18 +78,9 @@ $ mecha-agent setup
 
 ```bash
 $ mecha-agent whoami
-> Machine details fetched
-ID: ___
-Name: ___
-Alias: ___
-Certificate Serial Number: ___
-Certificate Fingerprint: ___
-
 ```
 
 ### Reset
 ```bash
 $ mecha-agent reset
-> Are you sure you want to reset the agent (Name: mars-machine) [Y/N] - ?
-> Agent reset successful
 ```
