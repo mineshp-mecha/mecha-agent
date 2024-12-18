@@ -11,6 +11,7 @@ pub enum DeviceSettingErrorCodes {
     CreateConsumerError,
     ChannelSendMessageError,
     ChannelReceiveMessageError,
+    SettingsDatabaseDeleteError,
 }
 
 impl fmt::Display for DeviceSettingErrorCodes {
@@ -39,6 +40,9 @@ impl fmt::Display for DeviceSettingErrorCodes {
             }
             DeviceSettingErrorCodes::ChannelReceiveMessageError => {
                 write!(f, "DeviceSettingErrorCodes: ChannelReceiveMessageError")
+            }
+            DeviceSettingErrorCodes::SettingsDatabaseDeleteError => {
+                write!(f, "DeviceSettingErrorCodes: SettingsDatabaseDeleteError")
             }
         }
     }

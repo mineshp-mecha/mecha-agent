@@ -11,10 +11,11 @@ use tracing::{error, info};
 
 use crate::errors::{DeviceSettingError, DeviceSettingErrorCodes};
 use crate::service::{
-    await_settings_message, create_pull_consumer, get_settings_by_key, set_settings,
+    await_settings_message, create_pull_consumer, get_settings_by_key, reset_settings, set_settings,
 };
 const PACKAGE_NAME: &str = env!("CARGO_CRATE_NAME");
 pub struct SettingHandler {
+    settings: Settings,
     event_tx: broadcast::Sender<Event>,
     messaging_tx: mpsc::Sender<MessagingMessage>,
     identity_tx: mpsc::Sender<IdentityMessage>,
@@ -36,7 +37,12 @@ pub enum SettingMessage {
     },
 }
 
+#[derive(Debug)]
+pub struct Settings {
+    pub data_dir: String,
+}
 pub struct SettingOptions {
+    pub settings: Settings,
     pub event_tx: broadcast::Sender<Event>,
     pub messaging_tx: mpsc::Sender<MessagingMessage>,
     pub identity_tx: mpsc::Sender<IdentityMessage>,
@@ -45,6 +51,7 @@ pub struct SettingOptions {
 impl SettingHandler {
     pub fn new(options: SettingOptions) -> Self {
         Self {
+            settings: options.settings,
             event_tx: options.event_tx,
             messaging_tx: options.messaging_tx,
             identity_tx: options.identity_tx,
@@ -80,7 +87,6 @@ impl SettingHandler {
                     ))
                 }
             };
-        println!("******************* consumer**************: {:?}", consumer);
         let mut futures = JoinSet::new();
         futures.spawn(await_settings_message(
             consumer.clone(),
@@ -149,7 +155,7 @@ impl SettingHandler {
                     match msg.unwrap() {
                         SettingMessage::StartSettings { reply_to } => {
                             let status = self.settings_consumer().await;
-                            reply_to.send(status);
+                            let _ = reply_to.send(status);
                         }
                         SettingMessage::GetSettingsByKey { reply_to, key } => {
                             let value = get_settings_by_key(key).await;
@@ -157,7 +163,7 @@ impl SettingHandler {
                         }
                         SettingMessage::SetSettings { reply_to, settings } => {
                             let result = set_settings(self.event_tx.clone(), settings).await;
-                            let _ = reply_to.send(Ok(false));
+                            let _ = reply_to.send(result);
                         }
                     };
                 }
@@ -201,6 +207,7 @@ impl SettingHandler {
                                 package = PACKAGE_NAME,
                                 "deprovisioned event in settings service"
                             );
+                            let _ = reset_settings(&self.settings.data_dir);
                             let _ = self.clear_sync_settings_subscriber();
                             let _ = self.clear_settings_subscription();
                         }

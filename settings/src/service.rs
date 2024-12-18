@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::remove_dir_all};
 
-use agent_settings::AgentSettings;
+use agent_settings::{constants, AgentSettings};
 use anyhow::{bail, Result};
 use channel::recv_with_timeout;
 use crypto::random::generate_random_alphanumeric;
@@ -14,7 +14,7 @@ use nats_client::{
     Bytes, Message,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{de, json};
+use serde_json::json;
 use sha256::digest;
 use tokio::sync::{broadcast, mpsc::Sender, oneshot};
 use tracing::{debug, error, info, trace, warn};
@@ -166,7 +166,6 @@ pub async fn sync_settings(
     messaging_tx: Sender<MessagingMessage>,
 ) -> Result<bool> {
     let fn_name = "sync_settings";
-    let key_value_store = KeyValueStoreClient::new();
     let mut messages = match consumer.fetch().messages().await {
         Ok(s) => s,
         Err(e) => {
@@ -187,7 +186,7 @@ pub async fn sync_settings(
             process_message(message.clone(), messaging_tx.clone(), event_tx.clone()).await;
         // Acknowledges a message delivery
         match message.ack().await {
-            Ok(res) => {
+            Ok(_) => {
                 trace!(
                     func = fn_name,
                     package = PACKAGE_NAME,
@@ -468,7 +467,6 @@ async fn process_message(
             bail!(DeviceSettingError::new(
                 DeviceSettingErrorCodes::MessageHeaderEmptyError,
                 format!("message doesn't contain any headers"),
-
             ))
         }
     };
@@ -499,7 +497,6 @@ async fn process_message(
                 bail!(DeviceSettingError::new(
                     DeviceSettingErrorCodes::ChannelSendMessageError,
                     format!("error sending ack message - {:?}", err.to_string()),
-
                 ))
             }
         }
@@ -565,4 +562,78 @@ fn parse_message_payload(payload: Bytes) -> Result<AddTaskRequestPayload> {
         "payload parsed",
     );
     Ok(payload)
+}
+
+pub fn reset_settings(data_dir: &str) -> Result<bool> {
+    let fn_name = "reset_settings";
+    info!(func = fn_name, package = PACKAGE_NAME, "init");
+    //flush settings
+    let key_value_store = KeyValueStoreClient::new();
+    match key_value_store.flush_database() {
+        Ok(_) => (),
+        Err(err) => {
+            error!(
+                func = "reset_settings",
+                package = PACKAGE_NAME,
+                "error flushing settings - {:?}",
+                err
+            );
+            bail!(err)
+        }
+    }
+    let storage_path = data_dir.to_owned() + constants::DB_PATH;
+    let db_path = match fs::construct_dir_path(&storage_path) {
+        Ok(path) => {
+            debug!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "db path constructed {:?}",
+                path.display()
+            );
+            path
+        }
+        Err(e) => {
+            error!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "error constructing db path - {}",
+                e
+            );
+            bail!(DeviceSettingError::new(
+                DeviceSettingErrorCodes::SettingsDatabaseDeleteError,
+                format!("error constructing db path - {}", e),
+            ))
+        }
+    };
+
+    //3. Delete db
+    match remove_dir_all(&db_path.to_str().unwrap()) {
+        Ok(_) => {
+            debug!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "db deleted successfully from path - {:?}",
+                &db_path
+            )
+        }
+        Err(e) => {
+            error!(
+                func = fn_name,
+                package = PACKAGE_NAME,
+                "error deleting db, from path {:?}, error - {}",
+                &db_path,
+                e
+            );
+            bail!(DeviceSettingError::new(
+                DeviceSettingErrorCodes::SettingsDatabaseDeleteError,
+                format!("error deleting db, code: {}, error - {}", 1001, e),
+            ));
+        }
+    }
+    info!(
+        func = fn_name,
+        package = PACKAGE_NAME,
+        "database cleanup successfully"
+    );
+    Ok(true)
 }

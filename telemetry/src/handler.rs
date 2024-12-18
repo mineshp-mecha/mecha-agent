@@ -6,7 +6,6 @@ use anyhow::Result;
 use events::Event;
 use identity::handler::IdentityMessage;
 use messaging::handler::MessagingMessage;
-use opentelemetry::global;
 use settings::handler::SettingMessage;
 use tokio::{
     select,
@@ -14,13 +13,19 @@ use tokio::{
 };
 use tracing::{error, info};
 
+pub struct Settings {
+    pub export_endpoint: String,
+}
 pub struct TelemetryHandler {
+    pub settings: Settings,
     event_tx: broadcast::Sender<Event>,
     pub messaging_tx: mpsc::Sender<MessagingMessage>,
     pub identity_tx: mpsc::Sender<IdentityMessage>,
     pub settings_tx: mpsc::Sender<SettingMessage>,
+    is_messaging_connected: bool,
 }
 pub struct TelemetryOptions {
+    pub settings: Settings,
     pub event_tx: broadcast::Sender<Event>,
     pub messaging_tx: mpsc::Sender<MessagingMessage>,
     pub identity_tx: mpsc::Sender<IdentityMessage>,
@@ -43,10 +48,12 @@ pub enum TelemetryMessage {
 impl TelemetryHandler {
     pub fn new(options: TelemetryOptions) -> Self {
         Self {
+            settings: options.settings,
             event_tx: options.event_tx,
             identity_tx: options.identity_tx,
             messaging_tx: options.messaging_tx,
             settings_tx: options.settings_tx,
+            is_messaging_connected: false,
         }
     }
     pub async fn run(&mut self, mut message_rx: mpsc::Receiver<TelemetryMessage>) -> Result<()> {
@@ -67,12 +74,17 @@ impl TelemetryHandler {
 
                     match msg.unwrap() {
                         TelemetryMessage::SendLogs {logs, logs_type, reply_to } => {
-                            let result = process_logs(logs_type, logs, self.identity_tx.clone(), self.messaging_tx.clone(), self.settings_tx.clone() ).await;
-                            let _ = reply_to.send(result);
+                            if self.is_messaging_connected {
+                                let result = process_logs(logs_type, logs, self.identity_tx.clone(), self.messaging_tx.clone(), self.settings_tx.clone() ).await;
+                                let _ = reply_to.send(result);
+                            }
                         }
                         TelemetryMessage::SendMetrics {metrics, metrics_type, reply_to } => {
-                            let result = process_metrics(metrics, metrics_type, self.identity_tx.clone(), self.messaging_tx.clone(), self.settings_tx.clone()).await;
-                            let _ = reply_to.send(result);
+                            if self.is_messaging_connected {
+                                let result = process_metrics(metrics, metrics_type, self.identity_tx.clone(), self.messaging_tx.clone(), self.settings_tx.clone()).await;
+                                let _ = reply_to.send(result);
+                            }
+
                         }
                     };
                 }
@@ -83,7 +95,8 @@ impl TelemetryHandler {
                 }
                 match event.unwrap() {
                     Event::Messaging(events::MessagingEvent::Connected) => {
-                        match initialize_metrics().await {
+                        self.is_messaging_connected = true;
+                        match initialize_metrics(&self.settings.export_endpoint).await {
                             Ok(_) => {
                                 info!(
                                     func = "run",
@@ -97,6 +110,12 @@ impl TelemetryHandler {
                                 "failed to initialize metrics - {:?}",e
                             ),
                         }
+                    },
+                    Event::Messaging(events::MessagingEvent::Disconnected) => {
+                        self.is_messaging_connected = false;
+                    },
+                    Event::Provisioning(events::ProvisioningEvent::Deprovisioned) => {
+                        self.is_messaging_connected = false;
                     },
                     _ => {}
                 }

@@ -13,7 +13,6 @@ use messaging::{
     handler::MessagingMessage,
     Message,
 };
-use nats_client::NatsClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use settings::handler::SettingMessage;
@@ -23,7 +22,7 @@ use tokio::sync::{
     oneshot,
 };
 use tracing::{debug, error, info, trace, warn};
-use wireguard::{PeerConfiguration, Wireguard};
+use wireguard::Wireguard;
 
 use crate::errors::{NetworkingError, NetworkingErrorCodes};
 
@@ -246,7 +245,7 @@ pub async fn publish_networking_channel(
             }
         };
     // Exchange the channel details
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, _rx) = tokio::sync::oneshot::channel();
     let subject = format!(
         "machine.{}.networking.network.{}.channel",
         digest(machine_id.clone()),
@@ -414,7 +413,7 @@ async fn process_consumer_message(
     };
     let mut headers = HashMap::new();
     headers.insert(String::from("Message-Type"), String::from("REQUEST"));
-    let (tx, rx) = oneshot::channel();
+    let (tx, _rx) = oneshot::channel();
     match messaging_tx
         .send(MessagingMessage::Send {
             reply_to: tx,
@@ -464,23 +463,11 @@ async fn process_consumer_message(
 }
 pub async fn create_channel_sync_consumer(
     messaging_tx: Sender<MessagingMessage>,
-    identity_tx: Sender<IdentityMessage>,
+    _identity_tx: Sender<IdentityMessage>,
     settings_tx: Sender<SettingMessage>,
 ) -> Result<Consumer<Config>> {
     let fn_name = "create_channel_sync_consumer";
 
-    let machine_id = match get_machine_id(identity_tx.clone()).await {
-        Ok(id) => id,
-        Err(e) => {
-            error!(
-                func = fn_name,
-                package = PACKAGE_NAME,
-                error = e.to_string().as_str(),
-                "Error getting machine id"
-            );
-            bail!(e)
-        }
-    };
     let (tx, rx) = oneshot::channel();
     match messaging_tx
         .send(MessagingMessage::InitJetStream { reply_to: tx })
@@ -721,7 +708,7 @@ pub async fn reconnect_messaging_service(
     messaging_tx: Sender<MessagingMessage>,
     new_setting: String,
     existing_settings: HashMap<String, String>,
-) -> Result<Option<NatsClient>> {
+) -> Result<bool> {
     let fn_name = "reconnect_messaging_service";
     match existing_settings.get("networking.enabled") {
         Some(setting) => {
@@ -731,7 +718,7 @@ pub async fn reconnect_messaging_service(
                     package = PACKAGE_NAME,
                     "networking settings are same, no need to reconnect"
                 );
-                return Ok(None);
+                return Ok(false);
             }
         }
         None => {
@@ -781,5 +768,5 @@ pub async fn reconnect_messaging_service(
         package = PACKAGE_NAME,
         "reconnect request completed",
     );
-    Ok(Some(result))
+    Ok(result)
 }

@@ -3,18 +3,17 @@ use anyhow::{bail, Result};
 use events::Event;
 use identity::handler::IdentityMessage;
 use messaging::handler::MessagingMessage;
-use serde_json::json;
 use settings::handler::SettingMessage;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::select;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::{JoinHandle, JoinSet};
-use tokio::{select, task};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 use wireguard::Wireguard;
 
 use crate::errors::{NetworkingError, NetworkingErrorCodes};
 use crate::handshake_handler::{
-    await_networking_handshake_message, HandshakeChannelHandler, HandshakeMessage, Manifest,
+    await_networking_handshake_message, HandshakeChannelHandler, HandshakeMessage,
 };
 use crate::service::{
     await_consumer_message, configure_wireguard, create_channel_sync_consumer, get_machine_id,

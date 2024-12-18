@@ -4,7 +4,6 @@ use std::str::FromStr;
 
 use agent_settings::{read_settings_yml, AgentSettings};
 use anyhow::{bail, Result};
-use chrono::format;
 use crypto::random::generate_random_alphanumeric;
 use futures::StreamExt;
 use local_ip_address::list_afinet_netifas;

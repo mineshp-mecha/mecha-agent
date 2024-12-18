@@ -35,7 +35,11 @@ pub async fn init_handlers(
     .await;
 
     let (messaging_t, messaging_tx) = init_messaging_service(MessagingOptions {
-        nats_addr: settings.backend.messaging,
+        settings: messaging::handler::Settings {
+            data_dir: settings.data.dir.clone(),
+            service_url: settings.backend.service.clone(),
+            nats_addr: settings.backend.messaging,
+        },
         event_tx: event_tx.clone(),
         identity_tx: identity_tx.clone(),
     })
@@ -61,6 +65,9 @@ pub async fn init_handlers(
     .await;
 
     let (setting_t, setting_tx) = init_setting_service(SettingOptions {
+        settings: settings::handler::Settings {
+            data_dir: settings.data.dir.clone(),
+        },
         event_tx: event_tx.clone(),
         messaging_tx: messaging_tx.clone(),
         identity_tx: identity_tx.clone(),
@@ -75,6 +82,9 @@ pub async fn init_handlers(
     .await;
 
     let (telemetry_t, telemetry_tx) = init_telemetry_service(TelemetryOptions {
+        settings: telemetry::handler::Settings {
+            export_endpoint: format!("http://{}", grpc_socket_addr),
+        },
         event_tx: event_tx.clone(),
         messaging_tx: messaging_tx.clone(),
         identity_tx: identity_tx.clone(),
@@ -185,7 +195,7 @@ async fn init_messaging_service(
     let (messaging_tx, messaging_rx) = mpsc::channel(CHANNEL_SIZE);
 
     let messaging_t = tokio::spawn(async move {
-        match MessagingHandler::new(opt).run(None, messaging_rx).await {
+        match MessagingHandler::new(opt).run(messaging_rx).await {
             Ok(_) => (),
             Err(e) => {
                 error!(

@@ -1,12 +1,12 @@
 use opentelemetry::logs::LogError;
 use opentelemetry::{metrics, KeyValue};
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
-use opentelemetry_sdk::logs::{Config, LoggerProvider};
+use opentelemetry_sdk::logs::Config;
 use opentelemetry_sdk::{metrics::MeterProvider, runtime, Resource};
 use std::time::Duration;
-pub fn init_otlp_configuration() -> metrics::Result<MeterProvider> {
+pub fn init_otlp_configuration(exporter_endpoint: &str) -> metrics::Result<MeterProvider> {
     let export_config = ExportConfig {
-        endpoint: "http://0.0.0.0:3001".to_string(),
+        endpoint: exporter_endpoint.to_string(),
         ..ExportConfig::default()
     };
 

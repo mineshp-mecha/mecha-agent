@@ -1,5 +1,6 @@
 use crate::errors::{NatsClientError, NatsClientErrorCodes};
 use anyhow::{bail, Result};
+use async_nats::Client;
 pub use async_nats::Subscriber;
 pub use bytes::Bytes;
 use events::Event;
@@ -21,7 +22,7 @@ pub struct NatsClient {
     pub address: String,
     pub user_public_key: String,
     pub client: Option<async_nats::Client>,
-    user_key_pair: Arc<KeyPair>,
+    pub user_key_pair: Arc<KeyPair>,
 }
 
 impl NatsClient {
@@ -40,7 +41,7 @@ impl NatsClient {
         token: &str,
         inbox_prefix: &str,
         event_tx: Option<Sender<Event>>,
-    ) -> Result<bool> {
+    ) -> Result<Option<Client>> {
         trace!(
             func = "connect",
             package = PACKAGE_NAME,
@@ -60,7 +61,7 @@ impl NatsClient {
                                 error!(
                                     func = "connect",
                                     package = PACKAGE_NAME,
-                                    "error sending messaging service event on nats disconnect- {}",
+                                    "error sending messaging service event on nats event callback- {}",
                                     e
                                 );
                             }
@@ -99,7 +100,11 @@ impl NatsClient {
             package = PACKAGE_NAME,
             "nats client connected"
         );
-        Ok(true)
+        println!(
+            "AFTER CONNECT - CLIENT ID: {:?}",
+            self.client.as_ref().unwrap().server_info().client_id
+        );
+        Ok(self.client.clone())
     }
 
     pub fn get_connected_client(&self) -> Result<&async_nats::Client> {
@@ -117,6 +122,7 @@ impl NatsClient {
                 ))
             }
         };
+
         match client.connection_state() {
             async_nats::connection::State::Connected => (),
             async_nats::connection::State::Pending => {

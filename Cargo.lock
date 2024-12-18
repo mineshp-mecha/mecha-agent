@@ -4829,6 +4829,7 @@ dependencies = [
  "channel",
  "crypto",
  "events",
+ "fs",
  "futures",
  "identity",
  "kv-store",

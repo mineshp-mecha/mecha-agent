@@ -338,13 +338,13 @@ pub fn read_public_key(file_path: &str) -> Result<CapturedX509Certificate> {
             error!(
                 func = fn_name,
                 package = PACKAGE_NAME,
-                "failed to open private key file on path - {}, error - {}",
+                "failed to open public key file on path - {}, error - {}",
                 file_path,
                 e
             );
             bail!(CryptoError::new(
-                CryptoErrorCodes::ReadPrivateKeyError,
-                format!("failed to open private key file - {}", e),
+                CryptoErrorCodes::ReadPublicKeyError,
+                format!("failed to open public key file - {}", e),
             ))
         }
     };

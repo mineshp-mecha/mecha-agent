@@ -5,6 +5,7 @@ pub enum MessagingErrorCodes {
     #[default]
     UnknownError,
     NatsClientNotInitialized,
+    NatsClientCreatingError,
     GetAuthNonceUnknownError,
     GetAuthNonceServerError,
     GetAuthNonceNotFoundError,
@@ -26,6 +27,9 @@ impl fmt::Display for MessagingErrorCodes {
             MessagingErrorCodes::UnknownError => write!(f, "MessagingErrorCodes: UnknownError"),
             MessagingErrorCodes::NatsClientNotInitialized => {
                 write!(f, "MessagingErrorCodes: NatsClientNotInitialized")
+            }
+            MessagingErrorCodes::NatsClientCreatingError => {
+                write!(f, "MessagingErrorCodes: NatsClientCreatingError")
             }
             MessagingErrorCodes::GetAuthNonceUnknownError => {
                 write!(f, "MessagingErrorCodes: GetAuthNonceUnknownError")
