@@ -61,7 +61,7 @@ jobs:
           libprotobuf-dev
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli@1.6.0
+        run: cargo install tauri-cli@1.6.1
 
       - name: Vite Build
         run: |
