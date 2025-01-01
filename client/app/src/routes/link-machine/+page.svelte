@@ -97,7 +97,7 @@
 <Layout>
 	<div class="flex flex-col">
 		<Header title={'Link Your Machine'} />
-		<SubHeader text={'Use the below code to onnect this machine to your mech.so account'} />
+		<SubHeader text={'Use the below code to connect this machine to your mecha.so account'} />
 
 		<div
 			class="mt-1.5 h-12 relative flex-grow flex-col rounded-xl border-2 border-solid border-zinc-600"
@@ -112,7 +112,7 @@
 		<div class="mt-4 flex flex-col gap-4 text-sm font-medium">
 			<div class="mb-2 flex flex-row gap-x-2">
 				<div class="h-min rounded-md border px-1.5">1</div>
-				<p>Create a new account on Mecha, if not signed up eardiver.</p>
+				<p>Create a new account on Mecha, if not signed up earlier</p>
 			</div>
 			<div class="mb-2 flex flex-row gap-x-2">
 				<div class="h-min rounded-md border px-1.5">2</div>

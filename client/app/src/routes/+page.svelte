@@ -19,7 +19,7 @@
 				try {
 					const data = await get_machine_id();
 					console.log('get_machine_id data: ', data);
-					machineInfo.set({ id: data.machine_id });
+					// machineInfo.set({ id: data.machine_id });
 					goto('/machine-info');
 				} catch (error) {
 					console.error('Error: Check machine id : ', error);
@@ -63,7 +63,7 @@
 					<Carousel.Item>
 						<div class="flex h-full w-full flex-col items-center rounded-md p-8">
 							<Icons name="telemetry_icon" class="w-80 h-20" />
-							<p class="mt-8 text-center text-xl font-medium">Integrated Telemetry real-time</p>
+							<p class="mt-8 text-center text-xl font-medium">Integrated telemetry real-time</p>
 						</div>
 					</Carousel.Item>
 					<Carousel.Item>

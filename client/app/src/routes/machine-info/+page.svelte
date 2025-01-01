@@ -10,9 +10,14 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Button } from '$lib/components/ui/button';
 
-	let storeData: MachineDataType = $machineInfo;
+	// commit :
+	// fix: store value, close error prompt
 
-	console.log('storeData: ', storeData);
+	let storeData: MachineDataType = $machineInfo;
+	machineInfo.subscribe((value) => {
+		storeData = value;
+	});
+
 	let machine_id: string = '-';
 	let machine_name: string = 'My Machine';
 	let machine_icon: string = '';
@@ -24,23 +29,16 @@
 
 	const get_machine_data = async () => {
 		try {
-			let data: any = await get_machine_info();
-			let { id, name, icon } = data;
+			await get_machine_info();
+			let { id, name, icon } = storeData;
 			machine_id = id;
 			machine_name = name ? name : 'My Machine';
-			machine_icon = icon;
+			machine_icon = icon || '';
 		} catch (error) {
 			console.error('fetching machine info error : ', error);
+			is_error = true;
 		}
 	};
-
-	$: if (machine_name || machine_icon) {
-		machineInfo.set({
-			...storeData,
-			name: machine_name,
-			icon: machine_icon
-		});
-	}
 
 	const check_active_status = async () => {
 		try {
@@ -84,7 +82,7 @@
 		<div class="relative m-4 flex flex-col items-start justify-start">
 			<div class="">
 				<img
-					class="rounded-md"
+					class="rounded-lg"
 					width="120"
 					height="120"
 					src={machine_icon == '' ? MechaCompute : machine_icon}
@@ -114,52 +112,75 @@
 			You can unlink your machine from your Mecha account
 		</div>
 		<Dialog.Root bind:open={is_error}>
-			<Dialog.Content class="w-[90%] bg-[#1D1D1D] border-y-[#848484] border-x-0">
+			<Dialog.Content class="w-[90%] bg-[#1D1D1D] border-[#292929] rounded-lg">
 				<Dialog.Header>
 					<Dialog.Title class="flex justify-start">
-						<Icons name="attention" width="40" height="40" />
+						<div class="flex flex-row items-center gap-2">
+							<Icons name="attention" width="40" height="40" />
+							<span class="text-left"> {error_message} </span>
+						</div>
 					</Dialog.Title>
-					<Dialog.Description class="text-white flex justify-start">
-						{error_message}
-					</Dialog.Description>
 				</Dialog.Header>
-				<Dialog.Footer class="border-t border-[#848484]">
+				<div class="justify-self-end">
+					<Button
+						class="hover:bg-[#525251] border-0 outline-none flex justify-end gap-1 bg-[#444444] border-[#1D1D1D] rounded-lg text-xl"
+						type="button"
+						on:click={() => {
+							console.log('is_error:: ERROR ON CLICK', is_error);
+							is_loading = false;
+							is_error = false;
+						}}
+					>
+						<div class="flex flex-row items-center gap-2">Close</div>
+					</Button>
+				</div>
+				<!-- <Dialog.Footer class="border-t border-[#848484]"> -->
+				<!-- <Dialog.Footer class="">
 					<Button
 						class="bg-[#1D1D1D] border-0 outline-none flex justify-end gap-1"
 						type="button"
 						on:click={() => {
+							console.log('is_error:: ERROR ON CLICK', is_error);
 							is_loading = false;
+							is_error = false;
 						}}
 					>
-						<Icons name="close_icon" width="20" height="20" />
-						Close
+						<div class="flex flex-row items-center gap-2">
+							<Icons name="close_icon" width="20" height="20" />
+							Close
+						</div>
 					</Button>
-				</Dialog.Footer>
+				</Dialog.Footer> -->
 			</Dialog.Content>
 		</Dialog.Root>
 
+		<!--  border-y-[#848484] border-x-0 -->
 		<Dialog.Root bind:open={is_loading}>
-			<Dialog.Content class="w-[90%] bg-[#1D1D1D] border-y-[#848484] border-x-0">
+			<Dialog.Content class="w-[90%] bg-[#1D1D1D] border-[#292929] rounded-lg">
 				<Dialog.Header>
 					<Dialog.Title class="flex justify-start">
-						<Icons name="info" width="40" height="40" />
+						<div class="text-xl flex flex-row items-center gap-2">
+							<!-- <Icons name="info" width="40" height="40" /> -->
+							Fetching machine information...
+							<Icons name="spinner" width="30" height="30" />
+						</div>
 					</Dialog.Title>
-					<Dialog.Description class="text-white flex justify-start">
-						Fetching machine information...
-					</Dialog.Description>
 				</Dialog.Header>
-				<Dialog.Footer class="border-t border-[#848484]">
+				<!-- <Dialog.Footer class="border-t border-[#848484]">
 					<Button
 						class="bg-[#1D1D1D] border-0 outline-none flex justify-end"
 						type="button"
 						on:click={() => {
+							console.log('is_loading:: ERROR ON CLICK');
 							is_loading = false;
 						}}
 					>
-						<Icons name="close_icon" width="20" height="20" />
-						Close</Button
-					>
-				</Dialog.Footer>
+						<div class="flex flex-row items-center gap-2">
+							<Icons name="close_icon" width="20" height="20" />
+							Close
+						</div>
+					</Button>
+				</Dialog.Footer> -->
 			</Dialog.Content>
 		</Dialog.Root>
 	</div>

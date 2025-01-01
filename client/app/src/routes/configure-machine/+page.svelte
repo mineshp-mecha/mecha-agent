@@ -5,10 +5,15 @@
 	import Layout from '../../shared/layout.svelte';
 	import { get_machine_id } from '$lib/services';
 
+	// TODO :
+	// set store in services only
+	// remove setting store from here
+	// TEST end to end flow
+
 	const get_machine_id_data = new Promise(async (resolve, reject) => {
 		await get_machine_id()
 			.then((data: any) => {
-				machineInfo.set({ id: data.machine_id });
+				// machineInfo.set({ id: data.machine_id });
 				resolve(data);
 			})
 			.catch((error) => {
@@ -22,7 +27,8 @@
 	});
 
 	setTimeout(() => {
-		Promise.race([get_machine_id_data, checkTimeout])
+		// Promise.race([get_machine_id_data, checkTimeout])
+		Promise.race([get_machine_id, checkTimeout])
 			.then((value) => {
 				console.log('promise value: ', value);
 				goto('/setup-success');
@@ -44,7 +50,7 @@
 	<div class="flex flex-col" style="height:-webkit-fill-available">
 		<div class="relative flex flex-grow flex-col items-center justify-end">
 			<div class="flex justify-center text-2xl">
-				<span> Fetching machine information ... </span>
+				<span> Fetching machine information... </span>
 			</div>
 			<div class="mt-2">
 				<img alt="" src={SearchingNetworks} />

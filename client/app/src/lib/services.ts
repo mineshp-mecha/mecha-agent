@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api";
+import { machineInfo, readableMachineInfo } from "./stores";
+import { get } from "svelte/store";
 
 const goBack = () => {
     history.back();
@@ -25,6 +27,7 @@ const check_machine_provision_status = async () => {
 const get_machine_id = async () => {
     try {
         const data: any = await invoke('get_machine_id');
+		machineInfo.set({ id: data.machine_id });
         return data;
     } catch (error) {
         throw error;
@@ -33,10 +36,23 @@ const get_machine_id = async () => {
 
 const get_machine_info = async() => {
     try {
-        let machine_id_data : any = await invoke('get_machine_id');
+        let storeValue = get(readableMachineInfo);
         let machine_name_data : any = await invoke('get_machine_info', {key: "identity.machine.name"});
         let machine_icon_data : any = await invoke('get_machine_info', {key: "identity.machine.icon_url"});
-        return { id: machine_id_data.value, name : machine_name_data.value, icon: machine_icon_data.value};
+
+        let machine_id = storeValue.id;
+        if (!machine_id) {
+        let machine_id_data : any = await invoke('get_machine_id');
+            machine_id = machine_id_data.machine_id;
+        }
+
+        let machineInfoObj = {
+            name: machine_name_data.value,
+            icon: machine_icon_data.value,
+            id: machine_id,
+        }
+        machineInfo.set(machineInfoObj);
+        return machineInfoObj;
     } catch (error) {
         throw error;
     }
