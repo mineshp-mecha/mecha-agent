@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+TryExec=mecha-connect
+Exec=mecha-connect
+Icon=/usr/share/mechanix/shell/launcher/assets/icons/app_drawer/mecha_connect_icon.png
+Terminal=false
+Categories=System;
+
+Name=Connect
+GenericName=Connect
+Comment=Connect app
