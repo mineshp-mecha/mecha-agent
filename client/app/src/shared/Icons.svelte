@@ -171,6 +171,22 @@
 		close_icon: {
 			box: 20,
 			svg: `<path d="M4.44417 16.0562L10 10.5004M15.5558 4.94451L10 10.5004M10 10.5004L4.44416 4.94451M10 10.5004L15.5558 16.0562" stroke="white" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel"/>`
+		},
+		spinner: {
+			box: 30,
+			svg: `<svg version="1.1" id="L9" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+  viewBox="0 0 100 100" enable-background="new 0 0 0 0" xml:space="preserve">
+    <path fill="#2D8AFF" d="M73,50c0-12.7-10.3-23-23-23S27,37.3,27,50 M30.9,50c0-10.5,8.5-19.1,19.1-19.1S69.1,39.5,69.1,50" strock-width="5">
+      <animateTransform 
+         attributeName="transform" 
+         attributeType="XML" 
+         type="rotate"
+         dur="1s" 
+         from="0 50 50"
+         to="360 50 50" 
+         repeatCount="indefinite" />
+  </path>
+</svg>`
 		}
 	} as const;
 	let displayIcon = icons[name];

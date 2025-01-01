@@ -18,7 +18,8 @@
 			<div class="flex flex-col items-center justify-center">
 				<div class="text-2xl">Error connecting to service</div>
 				<div
-					class="mt-2 border-y-2 border-[#848484] bg-[#1C1C1C] px-2 py-1 text-base font-bold capitalize text-red-500"
+					class="mt-2
+					bg-[#444444] border-[#1D1D1D] rounded-lg text-xl px-2 py-1 text-base font-bold capitalize text-red-500"
 				>
 					Error : {error}
 				</div>
