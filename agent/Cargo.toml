@@ -1,5 +1,6 @@
 [package]
 name = "mecha-agent"
+description = "Mecha Agent on the device for provisioning, messaging and more"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -63,4 +64,11 @@ assets = [
         "/etc/mecha/settings.yml",
         "644",
     ],
+
+    # systemd services
+    [
+        "../mecha-agent.service",
+        "/lib/systemd/system/mecha-agent.service",
+        "266",
+    ]
 ]

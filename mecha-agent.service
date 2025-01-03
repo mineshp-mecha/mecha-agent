@@ -1,0 +1,14 @@
+[Unit]
+Description=Mecha agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+Type=exec
+ExecStart=sudo /usr/bin/mecha-agent start --server -s /etc/mecha-agent/settings.yml
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=sysinit.target
