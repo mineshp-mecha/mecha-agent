@@ -49,7 +49,7 @@ assets = [
     ],
     # desktop file
     [
-        "src/packaging/linux/org.mecha.connect.desktop", 
+        "./src/packaging/linux/org.mecha.connect.desktop", 
         "/usr/share/applications/", 
         "644"
     ],
