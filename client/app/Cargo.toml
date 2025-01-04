@@ -1,6 +1,6 @@
 [package]
 name = "connect"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Sweta Rohit <swetar@mechasystems.com"]
 description = "Client application for the Mecha Agent"
@@ -38,7 +38,7 @@ simple-base64 = "0.23.2"
 tonic-build = "0.9.2"
 
 [package.metadata.deb]
-name = "mecha-connect"
+name = "connect"
 depends = "$auto"
 assets = [
     # binary
