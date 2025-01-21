@@ -1,6 +1,6 @@
 # mecha-agent
 
-Mecha Agent is the service running on device to manage the connection with Mecha Services includes features for provisioning, messaging and telemetry. Check the [docs](https://docs.mecha.so) for more information.
+Mecha Agent is the service running on device to manage the connection with Mecha Services includes features for provisioning, messaging and telemetry. Check the [docs](https://developers.mecha.so/mecha-cloud/mecha-agent/overview) for more information.
 
 ## Dependencies
 
