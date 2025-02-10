@@ -26,10 +26,17 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - name: Mecha Agent
+          - name: Mecha Agent (arm64)
             package: mecha-agent
-            artifact: mecha-agent-aarch64-unknown-linux-gnu.tar.gz
+            artifact: mecha-agent-linux-arm64.tar.gz
             path: .
+
+          - name: Mecha Agent (amd64)
+            package: mecha-agent
+            artifact: mecha-agent-linux-amd64.tar.gz
+            path: .
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
 
     runs-on: ubicloud-standard-2-arm
     continue-on-error: false
