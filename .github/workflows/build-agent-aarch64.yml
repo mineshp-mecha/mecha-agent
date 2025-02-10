@@ -31,7 +31,7 @@ jobs:
             artifact: mecha-agent-aarch64-unknown-linux-gnu.tar.gz
             path: .
 
-          - name: Mecha Agent (AMD64)
+          - name: Mecha Agent (amd64)
             package: mecha-agent
             artifact: mecha-agent-x86_64-unknown-linux-gnu.tar.gz
             path: .
