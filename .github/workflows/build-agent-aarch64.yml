@@ -30,6 +30,8 @@ jobs:
             package: mecha-agent
             artifact: mecha-agent-linux-arm64.tar.gz
             path: .
+            target: aarch64-unknown-linux-gnu
+            runner: ubicloud-standard-2-arm
 
           - name: Mecha Agent (amd64)
             package: mecha-agent
@@ -66,8 +68,8 @@ jobs:
         run: |
           cd ${{ matrix.path }}
           cargo --config net.git-fetch-with-cli=true fetch
-          cargo build --release --package ${{ matrix.package }}
-          ls -la
+          cargo build --release --package ${{ matrix.package }} --target ${{ matrix.target }}
+          ls -la target/${{ matrix.target }}/release
 
       - name: Package deb [${{ matrix.package }}]
         continue-on-error: true
